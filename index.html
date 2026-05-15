@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>象棋殘局解題</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="app">
+  <h1>象棋殘局解題</h1>
+  <div id="main">
+    <div id="board-wrapper">
+      <div id="board"></div>
+      <div class="fen-row">
+        <input id="fen-input" type="text" readonly>
+        <button id="btn-import-fen" class="btn btn-small">匯入</button>
+      </div>
+    </div>
+    <div id="sidebar">
+      <div id="palette"></div>
+      <div id="controls">
+        <div class="depth-row">
+          <label>深度：<span id="depth-value">12</span></label>
+          <input type="range" id="depth-slider" min="1" max="20" value="12">
+        </div>
+        <div id="status">棋子：0</div>
+        <button id="btn-analyze" class="btn" disabled>分析</button>
+        <button id="btn-interrupt" class="btn" style="display:none">中斷</button>
+        <button id="btn-clear" class="btn">清除</button>
+      </div>
+      <div id="result">
+        <div id="result-content"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="script.js"></script>
+</body>
+</html>
