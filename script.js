@@ -712,13 +712,13 @@ function orderMoves(moves, b) {
   });
 }
 
-function alphaBetaSync(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth) {
+function alphaBetaSync(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth, checkExt) {
   if (interruptRequested) return { score: evaluate(b), move: null, pv: [] };
   if (Date.now() - startTime > timeLimit) return { score: evaluate(b), move: null, pv: [] };
 
   const inCheck = isInCheck(b, color);
   const actualMax = inCheck ? maxDepth + 1 : maxDepth;
-  if (depth >= actualMax) return { score: evaluate(b), move: null, pv: [] };
+  if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
 
   const moves = generateLegalMoves(b, color);
   if (moves.length === 0) {
@@ -738,7 +738,9 @@ function alphaBetaSync(b, color, depth, alpha, beta, startTime, timeLimit, maxDe
   for (const m of moves) {
     if (interruptRequested) break;
     const undo = makeMove(b, m);
-    const r = alphaBetaSync(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth);
+    const givesCheck = isInCheck(b, opp(color));
+    const nextExt = givesCheck && checkExt < 3 ? checkExt + 1 : checkExt;
+    const r = alphaBetaSync(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth, nextExt);
     unmakeMove(b, m, undo);
 
     if (color === 'red') {
@@ -753,13 +755,13 @@ function alphaBetaSync(b, color, depth, alpha, beta, startTime, timeLimit, maxDe
   return { score: bestScore, move: bestMove, pv: bestPV };
 }
 
-async function alphaBeta(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth, yieldState) {
+async function alphaBeta(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth, yieldState, checkExt) {
   if (interruptRequested) return { score: evaluate(b), move: null, pv: [] };
   if (Date.now() - startTime > timeLimit) return { score: evaluate(b), move: null, pv: [] };
 
   const inCheck = isInCheck(b, color);
   const actualMax = inCheck ? maxDepth + 1 : maxDepth;
-  if (depth >= actualMax) return { score: evaluate(b), move: null, pv: [] };
+  if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
 
   const moves = generateLegalMoves(b, color);
   if (moves.length === 0) {
@@ -787,7 +789,9 @@ async function alphaBeta(b, color, depth, alpha, beta, startTime, timeLimit, max
     }
 
     const undo = makeMove(b, m);
-    const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth, yieldState);
+    const givesCheck = isInCheck(b, opp(color));
+    const nextExt = givesCheck && checkExt < 3 ? checkExt + 1 : checkExt;
+    const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth, yieldState, nextExt);
     unmakeMove(b, m, undo);
 
     if (color === 'red') {
@@ -809,7 +813,7 @@ async function searchRootAsync(b, maxDepth, timeLimit) {
   for (let d = 1; d <= maxDepth; d++) {
     if (interruptRequested) break;
     const yieldState = { lastYield: Date.now() };
-    const r = await alphaBeta(b, 'red', 0, -INF, INF, startTime, timeLimit, d, yieldState);
+    const r = await alphaBeta(b, 'red', 0, -INF, INF, startTime, timeLimit, d, yieldState, 0);
     if (Date.now() - startTime >= timeLimit) break;
     best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) break;
@@ -818,7 +822,7 @@ async function searchRootAsync(b, maxDepth, timeLimit) {
 }
 
 function findRefutation(b, color, maxDepth, startTime, timeLimit) {
-  const r = alphaBetaSync(b, color, 0, -INF, INF, startTime, timeLimit, maxDepth);
+  const r = alphaBetaSync(b, color, 0, -INF, INF, startTime, timeLimit, maxDepth, 0);
   return r;
 }
 
