@@ -381,6 +381,12 @@ h1 {
   font-weight: bold;
 }
 
+.tree li.interrupted {
+  color: #888;
+  font-style: italic;
+  cursor: default;
+}
+
 .tree li .move-num {
   color: #a08060;
   margin-right: 4px;

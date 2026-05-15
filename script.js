@@ -822,8 +822,14 @@ async function searchRootAsync(b, maxDepth, timeLimit) {
 }
 
 function findRefutation(b, color, maxDepth, startTime, timeLimit) {
-  const r = alphaBetaSync(b, color, 0, -INF, INF, startTime, timeLimit, maxDepth, 0);
-  return r;
+  let best = { score: 0, move: null, pv: [] };
+  for (let d = 2; d <= maxDepth; d += 2) {
+    if (Date.now() - startTime > timeLimit) break;
+    const r = alphaBetaSync(b, color, 0, -INF, INF, startTime, timeLimit, d, 0);
+    if (r.move) best = r;
+    if (Math.abs(r.score) > MATE_VAL / 2) break;
+  }
+  return best;
 }
 
 // ═══════════════════════════════════════════
@@ -858,6 +864,7 @@ function restoreBoard(snapshot) {
 function pvToTree(b, pv, color, depth, maxDepth, startTime) {
   if (!pv || pv.length === 0 || depth > maxDepth) return null;
 
+  syncKingPos(b);
   const m = pv[0];
   const rest = pv.slice(1);
   const nb = applyBoardCopy(b, m);
@@ -875,11 +882,16 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
 
   for (const resp of responses) {
     const respBoard = applyBoardCopy(nb, resp);
+    const savedRK = redKingPos;
+    const savedBK = blackKingPos;
     const isPV = rest.length > 0 && movesEqual(resp, rest[0]);
     let childNode;
 
     if (isPV) {
       const sub = pvToTree(respBoard, rest.slice(1), color, depth + 1, maxDepth, startTime);
+      redKingPos = savedRK;
+      blackKingPos = savedBK;
+      syncKingPos(respBoard);
       childNode = {
         move: resp, notation: moveToNotation(nb, resp, nextColor),
         color: nextColor, isMate: isCheckmate(respBoard, color),
@@ -887,27 +899,43 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
         children: sub ? [sub] : [],
         board: deepCopyBoard(respBoard)
       };
-    } else {
-      const ref = findRefutation(respBoard, color, Math.max(2, maxDepth - depth - 1), startTime, 5000);
+    } else if (color === 'red') {
+      redKingPos = savedRK;
+      blackKingPos = savedBK;
+      const ref = findRefutation(respBoard, color, Math.max(2, maxDepth - depth - 1), Date.now(), 5000);
+      redKingPos = savedRK;
+      blackKingPos = savedBK;
       const refChildren = [];
       if (ref && ref.move) {
         const refBoard = applyBoardCopy(respBoard, ref.move);
-        const respAfterRef = generateLegalMoves(refBoard, nextColor).slice(0, 3);
+        let refSub = null;
+        if (ref.pv && ref.pv.length > 1) {
+          refSub = pvToTree(refBoard, ref.pv.slice(1), nextColor, depth + 2, maxDepth, Date.now());
+        }
+        const refFollowups = refSub
+          ? [refSub]
+          : generateLegalMoves(refBoard, nextColor).slice(0, 1).map(rr => {
+              const rrBoard = applyBoardCopy(refBoard, rr);
+              return {
+                move: rr, notation: moveToNotation(refBoard, rr, nextColor),
+                color: nextColor,
+                isMate: isCheckmate(rrBoard, opp(nextColor)),
+                isStalemate: isStalemate(rrBoard, opp(nextColor)),
+                children: [], board: deepCopyBoard(rrBoard)
+              };
+            });
         refChildren.push({
           move: ref.move, notation: moveToNotation(respBoard, ref.move, color),
           color: color, isMate: isCheckmate(refBoard, nextColor),
           isStalemate: isStalemate(refBoard, nextColor),
-          children: respAfterRef.map(rr => {
-            const rrBoard = applyBoardCopy(refBoard, rr);
-            return {
-              move: rr, notation: moveToNotation(refBoard, rr, nextColor),
-              color: nextColor, isMate: false, isStalemate: false,
-              children: [], board: deepCopyBoard(rrBoard)
-            };
-          }),
+          children: refFollowups,
           board: deepCopyBoard(refBoard)
         });
       }
+      redKingPos = savedRK;
+      blackKingPos = savedBK;
+      syncKingPos(respBoard);
+      if (refChildren.length === 0) continue;
       childNode = {
         move: resp, notation: moveToNotation(nb, resp, nextColor),
         color: nextColor, isMate: isCheckmate(respBoard, color),
@@ -938,6 +966,17 @@ function applyBoardCopy(src, move) {
   return nb;
 }
 
+function syncKingPos(b) {
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (b[r][c] && b[r][c].type === 'king') {
+        if (b[r][c].color === 'red') redKingPos = { row: r, col: c };
+        else blackKingPos = { row: r, col: c };
+      }
+    }
+  }
+}
+
 // ═══════════════════════════════════════════
 // RESULT DISPLAY
 // ═══════════════════════════════════════════
@@ -945,6 +984,12 @@ function applyBoardCopy(src, move) {
 function renderTree(node, moveNum, parentEl) {
   if (!node) return;
   const li = document.createElement('li');
+  if (node.interrupted) {
+    li.textContent = `  (分析中斷)`;
+    li.className = 'interrupted';
+    parentEl.appendChild(li);
+    return;
+  }
   li.className = node.color === 'red' ? 'red-move' : '';
   if (node.isMate) li.classList.add(node.color === 'red' ? 'mate' : 'mate-loss');
   if (node.isStalemate) li.classList.add(node.color === 'red' ? 'mate' : 'mate-loss');
@@ -1027,6 +1072,7 @@ function analyze() {
       let tree = null;
       if (result && result.move) {
         const nb = applyBoardCopy(boardCopy, result.move);
+        syncKingPos(nb);
         const isMateEnd = isCheckmate(nb, 'black');
         const isStalemateEnd = isStalemate(nb, 'black');
         const restPV = result.pv.slice(1);
@@ -1039,11 +1085,16 @@ function analyze() {
         const blackMoves = generateLegalMoves(nb, 'black');
         for (const bm of blackMoves) {
           const bmBoard = applyBoardCopy(nb, bm);
+          const savedRK = redKingPos;
+          const savedBK = blackKingPos;
           const isPV = restPV.length > 0 && movesEqual(bm, restPV[0]);
 
           let childNode;
           if (isPV) {
-            const sub = pvToTree(bmBoard, restPV.slice(1), 'red', 1, 8, Date.now());
+            const sub = pvToTree(bmBoard, restPV.slice(1), 'red', 1, 12, Date.now());
+            redKingPos = savedRK;
+            blackKingPos = savedBK;
+            syncKingPos(bmBoard);
             childNode = {
               move: bm, notation: moveToNotation(nb, bm, 'black'),
               color: 'black', isMate: isCheckmate(bmBoard, 'red'),
@@ -1051,27 +1102,49 @@ function analyze() {
               children: sub ? [sub] : [],
               board: deepCopyBoard(bmBoard)
             };
+            if (!childNode.isMate && !childNode.isStalemate && childNode.children.length === 0) {
+              syncKingPos(bmBoard);
+              const mate = isCheckmate(bmBoard, 'red');
+              const stale = isStalemate(bmBoard, 'red');
+              if (mate) childNode.isMate = true;
+              else if (stale) childNode.isStalemate = true;
+              else childNode.interrupted = true;
+            }
           } else {
-            const ref = findRefutation(bmBoard, 'red', 6, Date.now(), 5000);
+            redKingPos = savedRK;
+            blackKingPos = savedBK;
+            const ref = findRefutation(bmBoard, 'red', 10, Date.now(), 5000);
             const refChildren = [];
             if (ref && ref.move) {
               const refBoard = applyBoardCopy(bmBoard, ref.move);
-              const blackAfterRef = generateLegalMoves(refBoard, 'black').slice(0, 3);
+              let refSub = null;
+              if (ref.pv && ref.pv.length > 1) {
+                refSub = pvToTree(refBoard, ref.pv.slice(1), 'black', 2, 12, Date.now());
+              }
+              const refFollowups = refSub
+                ? [refSub]
+                : generateLegalMoves(refBoard, 'black').slice(0, 1).map(bm2 => {
+                    const bm2Board = applyBoardCopy(refBoard, bm2);
+                    return {
+                      move: bm2, notation: moveToNotation(refBoard, bm2, 'black'),
+                      color: 'black',
+                      isMate: isCheckmate(bm2Board, 'red'),
+                      isStalemate: isStalemate(bm2Board, 'red'),
+                      children: [], board: deepCopyBoard(bm2Board)
+                    };
+                  });
               refChildren.push({
                 move: ref.move, notation: moveToNotation(bmBoard, ref.move, 'red'),
                 color: 'red', isMate: isCheckmate(refBoard, 'black'),
                 isStalemate: isStalemate(refBoard, 'black'),
-                children: blackAfterRef.map(bm2 => {
-                  const bm2Board = applyBoardCopy(refBoard, bm2);
-                  return {
-                    move: bm2, notation: moveToNotation(refBoard, bm2, 'black'),
-                    color: 'black', isMate: false, isStalemate: false,
-                    children: [], board: deepCopyBoard(bm2Board)
-                  };
-                }),
+                children: refFollowups,
                 board: deepCopyBoard(refBoard)
               });
             }
+            redKingPos = savedRK;
+            blackKingPos = savedBK;
+            syncKingPos(bmBoard);
+            if (refChildren.length === 0) continue;
             childNode = {
               move: bm, notation: moveToNotation(nb, bm, 'black'),
               color: 'black', isMate: isCheckmate(bmBoard, 'red'),
