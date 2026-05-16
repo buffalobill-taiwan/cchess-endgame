@@ -387,6 +387,148 @@ h1 {
   cursor: default;
 }
 
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+}
+
+.modal {
+  background: #2c1810;
+  border: 1px solid #5c3a1e;
+  border-radius: 8px;
+  padding: 20px;
+  min-width: 420px;
+  max-width: 520px;
+  max-height: 80vh;
+  overflow-y: auto;
+  color: #e8d5b0;
+}
+
+.modal h2 {
+  margin: 0 0 16px;
+  font-size: 1.1rem;
+  letter-spacing: 0.1em;
+}
+
+.example-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid #3c2820;
+}
+
+.example-item:last-child {
+  border-bottom: none;
+}
+
+.example-label {
+  font-size: 0.85rem;
+  min-width: 60px;
+}
+
+.example-fen {
+  font-family: monospace;
+  font-size: 10px;
+  color: #a08060;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.example-load {
+  background: #5c3a1e;
+  color: #e8d5b0;
+  border: none;
+  border-radius: 3px;
+  padding: 2px 8px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.example-load:hover {
+  background: #7a4e2a;
+}
+
+.example-del {
+  background: transparent;
+  color: #c0392b;
+  border: 1px solid #c0392b;
+  border-radius: 3px;
+  padding: 2px 6px;
+  font-size: 0.7rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.example-del:hover {
+  background: #c0392b;
+  color: #fff;
+}
+
+.example-add {
+  display: flex;
+  gap: 6px;
+  margin-top: 12px;
+  align-items: center;
+}
+
+.example-add input {
+  flex: 1;
+  background: #3c2820;
+  border: 1px solid #5c3a1e;
+  border-radius: 3px;
+  padding: 4px 6px;
+  font-size: 0.8rem;
+  color: #e8d5b0;
+  font-family: inherit;
+}
+
+.example-add-name {
+  max-width: 80px;
+}
+
+.example-add input::placeholder {
+  color: #6a5040;
+}
+
+.example-add-btn {
+  background: #5c3a1e;
+  color: #e8d5b0;
+  border: none;
+  border-radius: 3px;
+  padding: 4px 10px;
+  font-size: 0.8rem;
+  cursor: pointer;
+  font-family: inherit;
+  white-space: nowrap;
+}
+
+.example-add-btn:hover {
+  background: #7a4e2a;
+}
+
+.modal-close {
+  float: right;
+  background: transparent;
+  color: #a08060;
+  border: none;
+  font-size: 1.2rem;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.modal-close:hover {
+  color: #e8d5b0;
+}
+
 .tree li .move-num {
   color: #a08060;
   margin-right: 4px;

@@ -1212,4 +1212,134 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('fen-input').addEventListener('click', function() {
     this.select();
   });
+
+  const DEFAULT_EXAMPLES = [
+    { label: '範例1', fen: '3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1 w - - 0 1' },
+    { label: '範例2', fen: '1rbak3r/1N1Ra4/cR2b1N2/9/9/9/9/9/5p3/4K4 w - - 0 1' },
+    { label: '範例3', fen: '2bk3cc/r3aR3/n1r1b4/9/9/6R2/9/3n5/4p4/1C3K3 w - - 0 1' },
+  ];
+
+  function loadExamples() {
+    const raw = localStorage.getItem('examples');
+    if (!raw) {
+      saveExamples(DEFAULT_EXAMPLES);
+      return DEFAULT_EXAMPLES.slice();
+    }
+    try { return JSON.parse(raw); } catch { return DEFAULT_EXAMPLES.slice(); }
+  }
+
+  function saveExamples(arr) {
+    localStorage.setItem('examples', JSON.stringify(arr));
+  }
+
+  function showExamplesModal() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.addEventListener('click', e => { if (e.target === overlay) overlay.remove(); });
+
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'modal-close';
+    closeBtn.textContent = '✕';
+    closeBtn.addEventListener('click', () => overlay.remove());
+
+    const title = document.createElement('h2');
+    title.textContent = '範例局面';
+
+    const list = document.createElement('div');
+    function renderList() {
+      list.innerHTML = '';
+      const items = loadExamples();
+      for (let i = 0; i < items.length; i++) {
+        const row = document.createElement('div');
+        row.className = 'example-item';
+
+        const label = document.createElement('span');
+        label.className = 'example-label';
+        label.textContent = items[i].label;
+
+        const fen = document.createElement('span');
+        fen.className = 'example-fen';
+        fen.textContent = items[i].fen;
+
+        const loadBtn = document.createElement('button');
+        loadBtn.className = 'example-load';
+        loadBtn.textContent = '載入';
+        loadBtn.addEventListener('click', () => {
+          try {
+            fenToBoard(items[i].fen);
+            renderPieces();
+            setupDragDrop();
+            updateStatus();
+            document.getElementById('result-content').innerHTML = '';
+            overlay.remove();
+          } catch (e) {
+            alert('FEN格式錯誤：' + e.message);
+          }
+        });
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'example-del';
+        delBtn.textContent = '刪除';
+        delBtn.addEventListener('click', () => {
+          const cur = loadExamples();
+          cur.splice(i, 1);
+          saveExamples(cur);
+          renderList();
+        });
+
+        row.appendChild(label);
+        row.appendChild(fen);
+        row.appendChild(loadBtn);
+        row.appendChild(delBtn);
+        list.appendChild(row);
+      }
+
+      const addRow = document.createElement('div');
+      addRow.className = 'example-add';
+
+      const labelInput = document.createElement('input');
+      labelInput.className = 'example-add-name';
+      labelInput.placeholder = '名稱';
+      const fenInput = document.createElement('input');
+      fenInput.placeholder = 'FEN 編碼';
+      fenInput.style.flex = '3';
+
+      const addBtn = document.createElement('button');
+      addBtn.className = 'example-add-btn';
+      addBtn.textContent = '新增';
+      addBtn.addEventListener('click', () => {
+        const l = labelInput.value.trim();
+        const f = fenInput.value.trim();
+        if (!l || !f) { alert('請輸入名稱與 FEN'); return; }
+        try {
+          fenToBoard(f);
+          fenToBoard(f);
+        } catch (e) {
+          alert('FEN格式錯誤：' + e.message);
+          return;
+        }
+        const cur = loadExamples();
+        cur.push({ label: l, fen: f });
+        saveExamples(cur);
+        renderList();
+      });
+
+      addRow.appendChild(labelInput);
+      addRow.appendChild(fenInput);
+      addRow.appendChild(addBtn);
+      list.appendChild(addRow);
+    }
+    renderList();
+
+    modal.appendChild(closeBtn);
+    modal.appendChild(title);
+    modal.appendChild(list);
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+  }
+
+  document.getElementById('btn-examples').addEventListener('click', showExamplesModal);
 });
