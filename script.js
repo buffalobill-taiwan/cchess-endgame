@@ -824,7 +824,7 @@ async function searchRootAsync(b, maxDepth, timeLimit) {
 function findRefutation(b, color, maxDepth, startTime, timeLimit) {
   let best = { score: 0, move: null, pv: [] };
   for (let d = 2; d <= maxDepth; d += 2) {
-    if (Date.now() - startTime > timeLimit) break;
+    if (interruptRequested || Date.now() - startTime > timeLimit) break;
     const r = alphaBetaSync(b, color, 0, -INF, INF, startTime, timeLimit, d, 0);
     if (r.move) best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) break;
@@ -862,7 +862,7 @@ function restoreBoard(snapshot) {
 }
 
 function pvToTree(b, pv, color, depth, maxDepth, startTime) {
-  if (!pv || pv.length === 0 || depth > maxDepth) return null;
+  if (interruptRequested || !pv || pv.length === 0 || depth > maxDepth) return null;
 
   syncKingPos(b);
   const m = pv[0];
@@ -881,6 +881,7 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
   const responses = generateLegalMoves(nb, nextColor);
 
   for (const resp of responses) {
+    if (interruptRequested) break;
     const respBoard = applyBoardCopy(nb, resp);
     const savedRK = redKingPos;
     const savedBK = blackKingPos;
@@ -1084,6 +1085,7 @@ function analyze() {
 
         const blackMoves = generateLegalMoves(nb, 'black');
         for (const bm of blackMoves) {
+          if (interruptRequested) break;
           const bmBoard = applyBoardCopy(nb, bm);
           const savedRK = redKingPos;
           const savedBK = blackKingPos;
