@@ -3,7 +3,7 @@ const W = PAD * 2 + (COLS - 1) * CELL;
 const H = PAD * 2 + (ROWS - 1) * CELL;
 
 const CHARS = {
-  red:   { king:'帥', advisor:'仕', elephant:'相', horse:'馬', chariot:'車', cannon:'炮', soldier:'兵' },
+  red:   { king:'帥', advisor:'仕', elephant:'相', horse:'傌', chariot:'俥', cannon:'炮', soldier:'兵' },
   black: { king:'將', advisor:'士', elephant:'象', horse:'馬', chariot:'車', cannon:'砲', soldier:'卒' },
 };
 
@@ -996,7 +996,7 @@ function renderTree(node, moveNum, parentEl) {
   li.style.cursor = 'pointer';
 
   const prefix = node.color === 'red' ? `${moveNum}.` : `${moveNum}. ...`;
-  const suffix = node.isMate ? '  將殺！' : node.isStalemate ? '  (困斃)' : '';
+  const suffix = node.isMate ? '  死棋' : node.isStalemate ? ' 困斃' : '';
   li.textContent = `${prefix} ${node.notation}${suffix}`;
   li.addEventListener('click', () => {
     if (node.board) restoreBoard(node.board);
@@ -1027,7 +1027,7 @@ function showResult(pvTree, score) {
 
   const h = document.createElement('h2');
   h.textContent = Math.abs(score) > MATE_VAL / 2
-    ? (score > 0 ? '紅方先手必勝' : '黑方必勝')
+    ? (score > 0 ? '紅方必勝' : '黑方必勝')
     : '最佳著法';
   rc.appendChild(h);
 
@@ -1048,11 +1048,11 @@ function analyze() {
     return;
   }
   if (isCheckmate(board, 'red')) {
-    document.getElementById('result-content').innerHTML = '<p>紅方已被將死，無法分析</p>';
+    document.getElementById('result-content').innerHTML = '<p>紅方死棋，黑方勝</p>';
     return;
   }
   if (isStalemate(board, 'red')) {
-    document.getElementById('result-content').innerHTML = '<p>紅方被困斃，黑方勝</p>';
+    document.getElementById('result-content').innerHTML = '<p>紅方困斃，黑方勝</p>';
     return;
   }
 
