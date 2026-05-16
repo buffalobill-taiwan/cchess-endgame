@@ -222,7 +222,7 @@ function movePiece(fr, fc, tr, tc) {
 function renderPalette() {
   const pal = document.getElementById('palette');
   pal.innerHTML = '';
-  for (const color of ['red','black']) {
+  for (const color of ['black', 'red']) {
     const sec = document.createElement('div');
     sec.className = 'palette-section';
     const h3 = document.createElement('h3');
