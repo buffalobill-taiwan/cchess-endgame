@@ -1041,7 +1041,7 @@ function renderTree(node, moveNum, parentEl) {
   li.style.cursor = 'pointer';
 
   const prefix = node.color === 'red' ? `${moveNum}.` : `${moveNum}. ...`;
-  const suffix = node.isMate ? '  死棋' : node.isStalemate ? ' 困斃' : '';
+  const suffix = node.isMate ? ' 將死' : node.isStalemate ? ' 困斃' : '';
   li.textContent = `${prefix} ${node.notation}${suffix}`;
   li.addEventListener('click', () => {
     if (node.board) restoreBoard(node.board);
