@@ -247,7 +247,7 @@ function renderPalette() {
 
 function updateStatus() {
   document.getElementById('status').textContent = `棋子：${pieceCount}`;
-  document.getElementById('btn-analyze').disabled = pieceCount < 2 || isAnalyzing;
+  document.getElementById('btn-analyze').disabled = !redKingPos || !blackKingPos || isAnalyzing;
   updateFenInput();
 }
 
