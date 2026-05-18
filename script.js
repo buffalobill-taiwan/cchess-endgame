@@ -1061,7 +1061,13 @@ function renderTree(node, moveNum, parentEl) {
   li.style.cursor = 'pointer';
 
   const prefix = node.color === 'red' ? `${moveNum}.` : `${moveNum}. ...`;
-  const suffix = node.isMate ? ' 將死' : node.isStalemate ? ' 困斃' : '';
+  let suffix = node.isMate ? ' 將死' : node.isStalemate ? ' 困斃' : '';
+  if (!node.isMate && !node.isStalemate && node.board) {
+    const savedRK = redKingPos, savedBK = blackKingPos;
+    syncKingPos(node.board);
+    if (isInCheck(node.board, opp(node.color))) suffix = ' 將軍';
+    redKingPos = savedRK; blackKingPos = savedBK;
+  }
   li.textContent = `${prefix} ${node.notation}${suffix}`;
   li.addEventListener('click', () => {
     if (node.board) restoreBoard(node.board);
@@ -1419,6 +1425,10 @@ document.addEventListener('DOMContentLoaded', () => {
     { label: '範例1', fen: '3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1 w - - 0 1' },
     { label: '範例2', fen: '1rbak3r/1N1Ra4/cR2b1N2/9/9/9/9/9/5p3/4K4 w - - 0 1' },
     { label: '範例3', fen: '2bk3cc/r3aR3/n1r1b4/9/9/6R2/9/3n5/4p4/1C3K3 w - - 0 1' },
+    { label: '範例4', fen: '4k2PC/5P3/c8/9/4r4/3c5/9/B3p4/4p4/3K5 w - - 0 1' },
+    { label: '範例5', fen: '3a1aC2/2PcPn3/2nkb3R/7C1/6b2/9/9/9/5p3/2rAK1p2 w - - 0 1' },
+    { label: '範例6', fen: '9/9/3a1k3/6P2/9/9/3r5/2n3r2/C8/4K1p2 w - - 0 1' },
+    { label: '範例7', fen: '3rka1R1/4aR3/4b4/9/9/9/6r2/7C1/3p5/c1BA1K3 w - - 0 1' },
   ];
 
   function loadExamples() {
