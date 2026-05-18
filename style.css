@@ -165,6 +165,7 @@ h1 {
   gap: 12px;
   min-width: 160px;
   max-height: 566px;
+  overflow: hidden;
 }
 
 #palette {
@@ -320,7 +321,7 @@ h1 {
   font-size: 0.95rem;
   line-height: 1.6;
   overflow: auto;
-  flex: 1 1 auto;
+  flex: 1;
 }
 
 #result h2 {
@@ -367,6 +368,7 @@ h1 {
   position: relative;
   padding: 1px 0;
   color: #c8b89a;
+  white-space: nowrap;
 }
 
 .tree li.red-move {
