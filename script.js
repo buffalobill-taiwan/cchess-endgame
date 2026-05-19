@@ -821,11 +821,12 @@ async function searchRootAsync(b, maxDepth, timeLimit) {
   return best;
 }
 
-function findRefutation(b, color, maxDepth, startTime, timeLimit) {
+async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
   let best = { score: 0, move: null, pv: [] };
   for (let d = 2; d <= maxDepth; d += 2) {
     if (interruptRequested || Date.now() - startTime > timeLimit) break;
-    const r = alphaBetaSync(b, color, 0, -INF, INF, startTime, timeLimit, d, 0);
+    const yieldState = { lastYield: Date.now() };
+    const r = await alphaBeta(b, color, 0, -INF, INF, startTime, timeLimit, d, yieldState, 0);
     if (r.move) best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) {
       if (!best.move) best = r;
@@ -864,7 +865,7 @@ function restoreBoard(snapshot) {
   updateStatus();
 }
 
-function pvToTree(b, pv, color, depth, maxDepth, startTime) {
+async function pvToTree(b, pv, color, depth, maxDepth, startTime) {
   if (interruptRequested || !pv || pv.length === 0 || depth > maxDepth) return null;
 
   syncKingPos(b);
@@ -892,7 +893,7 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
     let childNode;
 
     if (isPV) {
-      const sub = pvToTree(respBoard, rest.slice(1), color, depth + 1, maxDepth, startTime);
+      const sub = await pvToTree(respBoard, rest.slice(1), color, depth + 1, maxDepth, startTime);
       redKingPos = savedRK;
       blackKingPos = savedBK;
       syncKingPos(respBoard);
@@ -916,7 +917,7 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
           children: [], board: deepCopyBoard(respBoard)
         };
       } else {
-        const ref = findRefutation(respBoard, color, Math.max(4, maxDepth - depth - 1), Date.now(), 5000);
+        const ref = await findRefutation(respBoard, color, Math.max(4, maxDepth - depth - 1), Date.now(), 5000);
         redKingPos = savedRK;
         blackKingPos = savedBK;
         const refChildren = [];
@@ -925,10 +926,10 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
           syncKingPos(refBoard);
           if (Math.abs(ref.score) > MATE_VAL / 2) {
             const losingMoves = generateLegalMoves(refBoard, nextColor);
-            const refFollowups = losingMoves.map(rr => {
+            const refFollowups = await Promise.all(losingMoves.map(async rr => {
               const rrBoard = applyBoardCopy(refBoard, rr);
               syncKingPos(rrBoard);
-              const ref2 = findRefutation(rrBoard, color, Math.max(4, maxDepth - depth - 2), Date.now(), 5000);
+              const ref2 = await findRefutation(rrBoard, color, Math.max(4, maxDepth - depth - 2), Date.now(), 5000);
               syncKingPos(rrBoard);
               const children2 = [];
               if (ref2 && ref2.move && Math.abs(ref2.score) > MATE_VAL / 2) {
@@ -940,7 +941,7 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
                   const oppBoard = applyBoardCopy(ref2Board, oppMove);
                   syncKingPos(oppBoard);
                   const ref2Sub = ref2.pv.length > 2
-                    ? pvToTree(oppBoard, ref2.pv.slice(2), color, depth + 3, maxDepth, Date.now())
+                    ? await pvToTree(oppBoard, ref2.pv.slice(2), color, depth + 3, maxDepth, Date.now())
                     : null;
                   ref2Children.push({
                     move: oppMove, notation: moveToNotation(ref2Board, oppMove, nextColor),
@@ -968,7 +969,7 @@ function pvToTree(b, pv, color, depth, maxDepth, startTime) {
                 children: children2,
                 board: deepCopyBoard(rrBoard)
               };
-            });
+            }));
             refChildren.push({
               move: ref.move, notation: moveToNotation(respBoard, ref.move, color),
               color: color, isMate: isCheckmate(refBoard, nextColor),
@@ -1166,16 +1167,16 @@ function analyze() {
                 children: [], board: deepCopyBoard(rmBoard)
               });
             } else {
-              const ref = findRefutation(rmBoard, 'black', Math.max(4, depth - 2), Date.now(), 5000);
+              const ref = await findRefutation(rmBoard, 'black', Math.max(4, depth - 2), Date.now(), 5000);
               const refChildren = [];
               if (ref && ref.move) {
                 const refBoard = applyBoardCopy(rmBoard, ref.move);
                 syncKingPos(refBoard);
                 const losingMoves = generateLegalMoves(refBoard, 'red');
-                const refFollowups = losingMoves.map(rr => {
+                const refFollowups = await Promise.all(losingMoves.map(async rr => {
                   const rrBoard = applyBoardCopy(refBoard, rr);
                   syncKingPos(rrBoard);
-                  const ref2 = findRefutation(rrBoard, 'black', Math.max(4, depth - 4), Date.now(), 5000);
+                  const ref2 = await findRefutation(rrBoard, 'black', Math.max(4, depth - 4), Date.now(), 5000);
                   const children2 = [];
                   if (ref2 && ref2.move && Math.abs(ref2.score) > MATE_VAL / 2) {
                     const ref2Board = applyBoardCopy(rrBoard, ref2.move);
@@ -1186,7 +1187,7 @@ function analyze() {
                       const oppBoard = applyBoardCopy(ref2Board, oppMove);
                       syncKingPos(oppBoard);
                       const ref2Sub = ref2.pv.length > 2
-                        ? pvToTree(oppBoard, ref2.pv.slice(2), 'black', 3, depth, Date.now())
+                        ? await pvToTree(oppBoard, ref2.pv.slice(2), 'black', 3, depth, Date.now())
                         : null;
                       ref2Children.push({
                         move: oppMove, notation: moveToNotation(ref2Board, oppMove, 'red'),
@@ -1214,7 +1215,7 @@ function analyze() {
                     children: children2,
                     board: deepCopyBoard(rrBoard)
                   };
-                });
+                }));
                 refChildren.push({
                   move: ref.move, notation: moveToNotation(rmBoard, ref.move, 'black'),
                   color: 'black', isMate: isCheckmate(refBoard, 'red'),
@@ -1258,7 +1259,7 @@ function analyze() {
 
             let childNode;
             if (isPV) {
-              const sub = pvToTree(bmBoard, restPV.slice(1), 'red', 1, depth, Date.now());
+              const sub = await pvToTree(bmBoard, restPV.slice(1), 'red', 1, depth, Date.now());
               redKingPos = savedRK;
               blackKingPos = savedBK;
               syncKingPos(bmBoard);
@@ -1290,16 +1291,16 @@ function analyze() {
                   children: [], board: deepCopyBoard(bmBoard)
                 };
               } else {
-                const ref = findRefutation(bmBoard, 'red', Math.max(4, depth - 2), Date.now(), 5000);
+                const ref = await findRefutation(bmBoard, 'red', Math.max(4, depth - 2), Date.now(), 5000);
                 const refChildren = [];
                 if (ref && ref.move) {
                   const refBoard = applyBoardCopy(bmBoard, ref.move);
                   syncKingPos(refBoard);
                   const losingMoves = generateLegalMoves(refBoard, 'black');
-                  const refFollowups = losingMoves.map(bm2 => {
+                  const refFollowups = await Promise.all(losingMoves.map(async bm2 => {
                     const bm2Board = applyBoardCopy(refBoard, bm2);
                     syncKingPos(bm2Board);
-                    const ref2 = findRefutation(bm2Board, 'red', Math.max(4, depth - 4), Date.now(), 5000);
+                    const ref2 = await findRefutation(bm2Board, 'red', Math.max(4, depth - 4), Date.now(), 5000);
                     const children2 = [];
                     if (ref2 && ref2.move && Math.abs(ref2.score) > MATE_VAL / 2) {
                       const ref2Board = applyBoardCopy(bm2Board, ref2.move);
@@ -1310,7 +1311,7 @@ function analyze() {
                         const oppBoard = applyBoardCopy(ref2Board, oppMove);
                         syncKingPos(oppBoard);
                         const ref2Sub = ref2.pv.length > 2
-                          ? pvToTree(oppBoard, ref2.pv.slice(2), 'red', 3, depth, Date.now())
+                          ? await pvToTree(oppBoard, ref2.pv.slice(2), 'red', 3, depth, Date.now())
                           : null;
                         ref2Children.push({
                           move: oppMove, notation: moveToNotation(ref2Board, oppMove, 'black'),
@@ -1338,7 +1339,7 @@ function analyze() {
                       children: children2,
                       board: deepCopyBoard(bm2Board)
                     };
-                  });
+                  }));
                   refChildren.push({
                     move: ref.move, notation: moveToNotation(bmBoard, ref.move, 'red'),
                     color: 'red', isMate: isCheckmate(refBoard, 'black'),
