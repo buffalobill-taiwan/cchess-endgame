@@ -1083,7 +1083,7 @@ function renderTree(node, moveNum, parentEl) {
   }
 }
 
-function showResult(pvTree, score) {
+function showResult(pvTree, score, interrupted) {
   const rc = document.getElementById('result-content');
   rc.innerHTML = '';
 
@@ -1092,15 +1092,21 @@ function showResult(pvTree, score) {
     return;
   }
 
-  if (Math.abs(score) < MATE_VAL / 2) {
-    const verdict = score > 0 ? `紅方優勢 (${score})` : score < 0 ? `黑方優勢 (${Math.abs(score)})` : '均勢';
-    rc.innerHTML = `<p>未找到必勝著法。${verdict}</p>`;
+  if (!interrupted) {
+    if (Math.abs(score) < MATE_VAL / 2) {
+      const verdict = score > 0 ? `紅方優勢 (${score})` : score < 0 ? `黑方優勢 (${Math.abs(score)})` : '均勢';
+      rc.innerHTML = `<p>未找到必勝著法。${verdict}</p>`;
+    }
   }
 
   const h = document.createElement('h2');
-  h.textContent = Math.abs(score) > MATE_VAL / 2
-    ? (score > 0 ? '紅方必勝' : '黑方必勝')
-    : '最佳著法';
+  if (interrupted) {
+    h.textContent = '分析中斷';
+  } else {
+    h.textContent = Math.abs(score) > MATE_VAL / 2
+      ? (score > 0 ? '紅方必勝' : '黑方必勝')
+      : '最佳著法';
+  }
   rc.appendChild(h);
 
   const ul = document.createElement('ul');
@@ -1365,7 +1371,8 @@ function analyze() {
           }
         }
       }
-      showResult(tree, result ? result.score : 0);
+      const wasInterrupted = interruptRequested;
+      showResult(tree, wasInterrupted ? 0 : (result ? result.score : 0), wasInterrupted);
     } catch (e) {
       document.getElementById('result-content').innerHTML = `<p>分析錯誤：${e.message}</p>`;
     } finally {
