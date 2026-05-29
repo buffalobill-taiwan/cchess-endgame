@@ -298,6 +298,29 @@ h1 {
   color: #fff;
 }
 
+.chk-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  color: #e8d5b0;
+  font-size: 0.85rem;
+  cursor: pointer;
+  user-select: none;
+}
+
+.chk-row input {
+  accent-color: #c0392b;
+  width: 16px;
+  height: 16px;
+  cursor: pointer;
+}
+
+.chk-row.disabled {
+  opacity: 0.4;
+  pointer-events: none;
+}
+
 #btn-analyze:not(:disabled):hover {
   background: #e74c3c;
 }

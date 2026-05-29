@@ -16,6 +16,7 @@ let redKingPos = null, blackKingPos = null;
 let pieceCount = 0;
 let isAnalyzing = false;
 let interruptRequested = false;
+let continuousCheck = false;
 let _dragDropProcessed = false;
 
 function initBoard() {
@@ -720,7 +721,15 @@ function alphaBetaSync(b, color, depth, alpha, beta, startTime, timeLimit, maxDe
   const actualMax = inCheck ? maxDepth + 1 : maxDepth;
   if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
 
-  const moves = generateLegalMoves(b, color);
+  let moves = generateLegalMoves(b, color);
+  if (continuousCheck && color === 'red') {
+    moves = moves.filter(m => {
+      const undo = makeMove(b, m);
+      const givesCheck = isInCheck(b, opp(color));
+      unmakeMove(b, m, undo);
+      return givesCheck;
+    });
+  }
   if (moves.length === 0) {
     if (inCheck) {
       const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
@@ -763,7 +772,15 @@ async function alphaBeta(b, color, depth, alpha, beta, startTime, timeLimit, max
   const actualMax = inCheck ? maxDepth + 1 : maxDepth;
   if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
 
-  const moves = generateLegalMoves(b, color);
+  let moves = generateLegalMoves(b, color);
+  if (continuousCheck && color === 'red') {
+    moves = moves.filter(m => {
+      const undo = makeMove(b, m);
+      const givesCheck = isInCheck(b, opp(color));
+      unmakeMove(b, m, undo);
+      return givesCheck;
+    });
+  }
   if (moves.length === 0) {
     if (inCheck) {
       const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
@@ -1138,6 +1155,10 @@ function analyze() {
     return;
   }
 
+  continuousCheck = document.getElementById('chk-continuous-check').checked;
+  document.getElementById('chk-continuous-check').disabled = true;
+  document.querySelector('.chk-row').classList.add('disabled');
+
   isAnalyzing = true;
   interruptRequested = false;
   updateStatus();
@@ -1155,7 +1176,17 @@ function analyze() {
       if (result && result.move) {
         if (Math.abs(result.score) > MATE_VAL / 2 && result.score < 0) {
           tree = { move: null, notation: '', color: 'red', isMate: false, isStalemate: false, children: [], board: null };
-          const redMoves = generateLegalMoves(boardCopy, 'red');
+          let redMoves = generateLegalMoves(boardCopy, 'red');
+          if (continuousCheck) {
+            redMoves = redMoves.filter(m => {
+              const nb = applyBoardCopy(boardCopy, m);
+              const savedRK = redKingPos, savedBK = blackKingPos;
+              syncKingPos(nb);
+              const givesCheck = isInCheck(nb, 'black');
+              redKingPos = savedRK; blackKingPos = savedBK;
+              return givesCheck;
+            });
+          }
           for (const rm of redMoves) {
             if (interruptRequested) break;
             const rmBoard = applyBoardCopy(boardCopy, rm);
@@ -1178,7 +1209,17 @@ function analyze() {
               if (ref && ref.move) {
                 const refBoard = applyBoardCopy(rmBoard, ref.move);
                 syncKingPos(refBoard);
-                const losingMoves = generateLegalMoves(refBoard, 'red');
+                let losingMoves = generateLegalMoves(refBoard, 'red');
+                if (continuousCheck) {
+                  losingMoves = losingMoves.filter(mm => {
+                    const nnb = applyBoardCopy(refBoard, mm);
+                    const savedRK = redKingPos, savedBK = blackKingPos;
+                    syncKingPos(nnb);
+                    const givesCheck = isInCheck(nnb, 'black');
+                    redKingPos = savedRK; blackKingPos = savedBK;
+                    return givesCheck;
+                  });
+                }
                 const refFollowups = await Promise.all(losingMoves.map(async rr => {
                   const rrBoard = applyBoardCopy(refBoard, rr);
                   syncKingPos(rrBoard);
@@ -1378,6 +1419,8 @@ function analyze() {
     } finally {
       isAnalyzing = false;
       interruptRequested = false;
+      document.getElementById('chk-continuous-check').disabled = false;
+      document.querySelector('.chk-row').classList.remove('disabled');
       btn.textContent = '分析';
       document.getElementById('btn-interrupt').style.display = 'none';
       updateStatus();
