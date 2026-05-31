@@ -713,114 +713,141 @@ function orderMoves(moves, b) {
   });
 }
 
-function alphaBetaSync(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth, checkExt) {
-  if (interruptRequested) return { score: evaluate(b), move: null, pv: [] };
-  if (Date.now() - startTime > timeLimit) return { score: evaluate(b), move: null, pv: [] };
-
-  const inCheck = isInCheck(b, color);
-  const actualMax = inCheck ? maxDepth + 1 : maxDepth;
-  if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
-
-  let moves = generateLegalMoves(b, color);
-  if (continuousCheck && color === 'red') {
-    moves = moves.filter(m => {
-      const undo = makeMove(b, m);
-      const givesCheck = isInCheck(b, opp(color));
-      unmakeMove(b, m, undo);
-      return givesCheck;
-    });
-  }
-  if (moves.length === 0) {
-    if (inCheck) {
-      const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
-      return { score: s, move: null, pv: [] };
+function boardKey(b, color) {
+  let k = '';
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const p = b[r][c];
+      k += p ? PIECE_TO_FEN[p.color][p.type] : '.';
     }
-    const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
-    return { score: s, move: null, pv: [] };
   }
-
-  orderMoves(moves, b);
-
-  let bestMove = null, bestPV = [];
-  let bestScore = color === 'red' ? -INF : INF;
-
-  for (const m of moves) {
-    if (interruptRequested) break;
-    const undo = makeMove(b, m);
-    const givesCheck = isInCheck(b, opp(color));
-    const nextExt = givesCheck && checkExt < 3 ? checkExt + 1 : checkExt;
-    const r = alphaBetaSync(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth, nextExt);
-    unmakeMove(b, m, undo);
-
-    if (color === 'red') {
-      if (r.score > bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
-      alpha = Math.max(alpha, bestScore);
-    } else {
-      if (r.score < bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
-      beta = Math.min(beta, bestScore);
-    }
-    if (alpha >= beta) break;
-  }
-  return { score: bestScore, move: bestMove, pv: bestPV };
+  return k + (color === 'red' ? 'w' : 'b');
 }
 
-async function alphaBeta(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth, yieldState, checkExt) {
+function alphaBetaSync(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth, checkExt, repSet) {
   if (interruptRequested) return { score: evaluate(b), move: null, pv: [] };
   if (Date.now() - startTime > timeLimit) return { score: evaluate(b), move: null, pv: [] };
 
-  const inCheck = isInCheck(b, color);
-  const actualMax = inCheck ? maxDepth + 1 : maxDepth;
-  if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
+  const key = boardKey(b, color);
+  if (repSet.has(key)) return { score: 0, move: null, pv: [] };
+  repSet.add(key);
 
-  let moves = generateLegalMoves(b, color);
-  if (continuousCheck && color === 'red') {
-    moves = moves.filter(m => {
-      const undo = makeMove(b, m);
-      const givesCheck = isInCheck(b, opp(color));
-      unmakeMove(b, m, undo);
-      return givesCheck;
-    });
-  }
-  if (moves.length === 0) {
-    if (inCheck) {
+  try {
+    const inCheck = isInCheck(b, color);
+    const actualMax = inCheck ? maxDepth + 1 : maxDepth;
+    if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
+
+    let moves = generateLegalMoves(b, color);
+    if (continuousCheck && color === 'red') {
+      moves = moves.filter(m => {
+        const undo = makeMove(b, m);
+        const givesCheck = isInCheck(b, opp(color));
+        unmakeMove(b, m, undo);
+        return givesCheck;
+      });
+    }
+    if (moves.length === 0) {
+      if (inCheck) {
+        const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
+        return { score: s, move: null, pv: [] };
+      }
       const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
       return { score: s, move: null, pv: [] };
     }
-    const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
-    return { score: s, move: null, pv: [] };
-  }
 
-  orderMoves(moves, b);
+    orderMoves(moves, b);
 
-  let bestMove = null, bestPV = [];
-  let bestScore = color === 'red' ? -INF : INF;
+    let bestMove = null, bestPV = [];
+    let bestScore = color === 'red' ? -INF : INF;
 
-  for (const m of moves) {
-    if (interruptRequested) break;
-
-    if (Date.now() - yieldState.lastYield > 30) {
-      await new Promise(r => setTimeout(r, 0));
-      yieldState.lastYield = Date.now();
+    for (const m of moves) {
       if (interruptRequested) break;
-      if (Date.now() - startTime > timeLimit) break;
-    }
+      const undo = makeMove(b, m);
+      const givesCheck = isInCheck(b, opp(color));
+      const nextExt = givesCheck && checkExt < 3 ? checkExt + 1 : checkExt;
+      const r = alphaBetaSync(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth, nextExt, repSet);
+      unmakeMove(b, m, undo);
 
-    const undo = makeMove(b, m);
-    const givesCheck = isInCheck(b, opp(color));
-    const nextExt = givesCheck && checkExt < 3 ? checkExt + 1 : checkExt;
-    const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth, yieldState, nextExt);
-    unmakeMove(b, m, undo);
-
-    if (color === 'red') {
-      if (r.score > bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
-      alpha = Math.max(alpha, bestScore);
-    } else {
-      if (r.score < bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
-      beta = Math.min(beta, bestScore);
+      if (color === 'red') {
+        if (r.score > bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
+        alpha = Math.max(alpha, bestScore);
+      } else {
+        if (r.score < bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
+        beta = Math.min(beta, bestScore);
+      }
+      if (alpha >= beta) break;
     }
-    if (alpha >= beta) break;
+    return { score: bestScore, move: bestMove, pv: bestPV };
+  } finally {
+    repSet.delete(key);
   }
-  return { score: bestScore, move: bestMove, pv: bestPV };
+}
+
+async function alphaBeta(b, color, depth, alpha, beta, startTime, timeLimit, maxDepth, yieldState, checkExt, repSet) {
+  if (interruptRequested) return { score: evaluate(b), move: null, pv: [] };
+  if (Date.now() - startTime > timeLimit) return { score: evaluate(b), move: null, pv: [] };
+
+  const key = boardKey(b, color);
+  if (repSet.has(key)) return { score: 0, move: null, pv: [] };
+  repSet.add(key);
+
+  try {
+    const inCheck = isInCheck(b, color);
+    const actualMax = inCheck ? maxDepth + 1 : maxDepth;
+    if (depth >= actualMax + checkExt) return { score: evaluate(b), move: null, pv: [] };
+
+    let moves = generateLegalMoves(b, color);
+    if (continuousCheck && color === 'red') {
+      moves = moves.filter(m => {
+        const undo = makeMove(b, m);
+        const givesCheck = isInCheck(b, opp(color));
+        unmakeMove(b, m, undo);
+        return givesCheck;
+      });
+    }
+    if (moves.length === 0) {
+      if (inCheck) {
+        const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
+        return { score: s, move: null, pv: [] };
+      }
+      const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
+      return { score: s, move: null, pv: [] };
+    }
+
+    orderMoves(moves, b);
+
+    let bestMove = null, bestPV = [];
+    let bestScore = color === 'red' ? -INF : INF;
+
+    for (const m of moves) {
+      if (interruptRequested) break;
+
+      if (Date.now() - yieldState.lastYield > 30) {
+        await new Promise(r => setTimeout(r, 0));
+        yieldState.lastYield = Date.now();
+        if (interruptRequested) break;
+        if (Date.now() - startTime > timeLimit) break;
+      }
+
+      const undo = makeMove(b, m);
+      const givesCheck = isInCheck(b, opp(color));
+      const nextExt = givesCheck && checkExt < 3 ? checkExt + 1 : checkExt;
+      const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, startTime, timeLimit, maxDepth, yieldState, nextExt, repSet);
+      unmakeMove(b, m, undo);
+
+      if (color === 'red') {
+        if (r.score > bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
+        alpha = Math.max(alpha, bestScore);
+      } else {
+        if (r.score < bestScore) { bestScore = r.score; bestMove = m; bestPV = [m, ...r.pv]; }
+        beta = Math.min(beta, bestScore);
+      }
+      if (alpha >= beta) break;
+    }
+    return { score: bestScore, move: bestMove, pv: bestPV };
+  } finally {
+    repSet.delete(key);
+  }
 }
 
 async function searchRootAsync(b, maxDepth, timeLimit) {
@@ -830,7 +857,7 @@ async function searchRootAsync(b, maxDepth, timeLimit) {
   for (let d = 1; d <= maxDepth; d++) {
     if (interruptRequested) break;
     const yieldState = { lastYield: Date.now() };
-    const r = await alphaBeta(b, 'red', 0, -INF, INF, startTime, timeLimit, d, yieldState, 0);
+    const r = await alphaBeta(b, 'red', 0, -INF, INF, startTime, timeLimit, d, yieldState, 0, new Set());
     if (Date.now() - startTime >= timeLimit) break;
     best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) break;
@@ -843,7 +870,7 @@ async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
   for (let d = 2; d <= maxDepth; d += 2) {
     if (interruptRequested || Date.now() - startTime > timeLimit) break;
     const yieldState = { lastYield: Date.now() };
-    const r = await alphaBeta(b, color, 0, -INF, INF, startTime, timeLimit, d, yieldState, 0);
+    const r = await alphaBeta(b, color, 0, -INF, INF, startTime, timeLimit, d, yieldState, 0, new Set());
     if (r.move) best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) {
       if (!best.move) best = r;
@@ -1105,7 +1132,7 @@ function showResult(pvTree, score, interrupted) {
   rc.innerHTML = '';
 
   if (!pvTree) {
-    rc.innerHTML = '<p>分析中斷或無可用著法</p>';
+    rc.innerHTML = interrupted ? '<p>分析中斷</p>' : continuousCheck ? '<p>未找到連將殺必勝著法</p>' : '<p>無可用著法</p>';
     return;
   }
 
@@ -1174,7 +1201,10 @@ function analyze() {
       const result = await searchRootAsync(boardCopy, depth, 15000);
       let tree = null;
       if (result && result.move) {
-        if (Math.abs(result.score) > MATE_VAL / 2 && result.score < 0) {
+        const isMateScore = Math.abs(result.score) > MATE_VAL / 2;
+        if (continuousCheck && !isMateScore) {
+          tree = null;
+        } else if (isMateScore && result.score < 0) {
           tree = { move: null, notation: '', color: 'red', isMate: false, isStalemate: false, children: [], board: null };
           let redMoves = generateLegalMoves(boardCopy, 'red');
           if (continuousCheck) {
