@@ -926,7 +926,17 @@ async function pvToTree(b, pv, color, depth, maxDepth, startTime) {
   };
 
   const nextColor = opp(color);
-  const responses = generateLegalMoves(nb, nextColor);
+  let responses = generateLegalMoves(nb, nextColor);
+  if (continuousCheck && nextColor === 'red') {
+    const savedRK = redKingPos, savedBK = blackKingPos;
+    responses = responses.filter(m => {
+      const nb2 = applyBoardCopy(nb, m);
+      syncKingPos(nb2);
+      const givesCheck = isInCheck(nb2, 'black');
+      redKingPos = savedRK; blackKingPos = savedBK;
+      return givesCheck;
+    });
+  }
 
   for (const resp of responses) {
     if (interruptRequested) break;
@@ -969,7 +979,17 @@ async function pvToTree(b, pv, color, depth, maxDepth, startTime) {
           const refBoard = applyBoardCopy(respBoard, ref.move);
           syncKingPos(refBoard);
           if (Math.abs(ref.score) > MATE_VAL / 2) {
-            const losingMoves = generateLegalMoves(refBoard, nextColor);
+            let losingMoves = generateLegalMoves(refBoard, nextColor);
+            if (continuousCheck && nextColor === 'red') {
+              const savedRK = redKingPos, savedBK = blackKingPos;
+              losingMoves = losingMoves.filter(mm => {
+                const nb2 = applyBoardCopy(refBoard, mm);
+                syncKingPos(nb2);
+                const givesCheck = isInCheck(nb2, 'black');
+                redKingPos = savedRK; blackKingPos = savedBK;
+                return givesCheck;
+              });
+            }
             const refFollowups = await Promise.all(losingMoves.map(async rr => {
               const rrBoard = applyBoardCopy(refBoard, rr);
               syncKingPos(rrBoard);
@@ -1022,7 +1042,18 @@ async function pvToTree(b, pv, color, depth, maxDepth, startTime) {
               board: deepCopyBoard(refBoard)
             });
           } else {
-            const flatFollowup = generateLegalMoves(refBoard, nextColor).slice(0, 1).map(rr => {
+            let flatMoves = generateLegalMoves(refBoard, nextColor);
+            if (continuousCheck && nextColor === 'red') {
+              const savedRK = redKingPos, savedBK = blackKingPos;
+              flatMoves = flatMoves.filter(mm => {
+                const nb2 = applyBoardCopy(refBoard, mm);
+                syncKingPos(nb2);
+                const givesCheck = isInCheck(nb2, 'black');
+                redKingPos = savedRK; blackKingPos = savedBK;
+                return givesCheck;
+              });
+            }
+            const flatFollowup = flatMoves.slice(0, 1).map(rr => {
               const rrBoard = applyBoardCopy(refBoard, rr);
               return {
                 move: rr, notation: moveToNotation(refBoard, rr, nextColor),
