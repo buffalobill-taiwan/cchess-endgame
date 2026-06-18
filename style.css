@@ -164,8 +164,7 @@ h1 {
   flex-direction: column;
   gap: 12px;
   min-width: 160px;
-  max-height: 566px;
-  overflow: hidden;
+  height: 566px;
 }
 
 #palette {
@@ -345,6 +344,7 @@ h1 {
   line-height: 1.6;
   overflow: auto;
   flex: 1;
+  resize: both;
 }
 
 #result h2 {
