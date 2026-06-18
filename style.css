@@ -394,6 +394,11 @@ h1 {
   white-space: nowrap;
 }
 
+.tree li:hover:not(.interrupted) {
+  text-decoration: underline;
+  filter: brightness(1.2);
+}
+
 .tree li.red-move {
   color: #e8d5b0;
 }

@@ -1158,7 +1158,7 @@ function renderTree(node, moveNum, parentEl) {
   }
 }
 
-function showResult(pvTree, score, interrupted) {
+function showResult(pvTree, score, interrupted, initialBoard) {
   const rc = document.getElementById('result-content');
   rc.innerHTML = '';
 
@@ -1186,6 +1186,21 @@ function showResult(pvTree, score, interrupted) {
 
   const ul = document.createElement('ul');
   ul.className = 'tree';
+
+  if (initialBoard) {
+    const liInit = document.createElement('li');
+    liInit.className = 'original-position';
+    liInit.style.cursor = 'pointer';
+    liInit.style.fontWeight = 'bold';
+    liInit.style.color = '#e8d5b0';
+    liInit.style.marginBottom = '4px';
+    liInit.textContent = '🏠 原始局面';
+    liInit.addEventListener('click', () => {
+      restoreBoard(initialBoard);
+    });
+    ul.appendChild(liInit);
+  }
+
   if (pvTree.move === null) {
     for (const child of pvTree.children) renderTree(child, 1, ul);
   } else {
@@ -1225,6 +1240,7 @@ function analyze() {
   document.getElementById('btn-interrupt').style.display = '';
   document.getElementById('result-content').innerHTML = '<p>分析中，請稍候...</p>';
 
+  const initialBoard = deepCopyBoard(board);
   const boardCopy = deepCopyBoard(board);
   const depth = parseInt(document.getElementById('depth-slider').value);
   (async () => {
@@ -1474,7 +1490,7 @@ function analyze() {
         }
       }
       const wasInterrupted = interruptRequested;
-      showResult(tree, wasInterrupted ? 0 : (result ? result.score : 0), wasInterrupted);
+      showResult(tree, wasInterrupted ? 0 : (result ? result.score : 0), wasInterrupted, initialBoard);
     } catch (e) {
       document.getElementById('result-content').innerHTML = `<p>分析錯誤：${e.message}</p>`;
     } finally {
