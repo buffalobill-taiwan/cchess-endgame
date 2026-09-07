@@ -63,28 +63,38 @@ export function boardToFen(b) {
 
 export function fenToBoard(fen) {
   initBoard();
+  if (!fen || !fen.trim()) throw new Error('空 FEN');
   const parts = fen.trim().split(/\s+/);
   const rows = parts[0].split('/');
-  for (let r = 0; r < Math.min(rows.length, ROWS); r++) {
+  if (rows.length !== ROWS) throw new Error(`棋盤應為 ${ROWS} 行，實際 ${rows.length} 行`);
+  let redKings = 0, blackKings = 0;
+  for (let r = 0; r < ROWS; r++) {
     let c = 0;
     for (const ch of rows[r]) {
-      if (ch >= '1' && ch <= '9') { c += parseInt(ch); continue; }
-      if (c >= COLS) break;
+      if (ch >= '1' && ch <= '9') { c += parseInt(ch, 10); continue; }
+      if (c >= COLS) throw new Error(`第 ${r + 1} 行超過 ${COLS} 路`);
       const isRed = ch === ch.toUpperCase();
-      for (const [type, code] of Object.entries(PIECE_TO_FEN[isRed ? 'red' : 'black'])) {
+      const side = PIECE_TO_FEN[isRed ? 'red' : 'black'];
+      let placed = false;
+      for (const [type, code] of Object.entries(side)) {
         if (code === ch) {
           state.board[r][c] = { type, color: isRed ? 'red' : 'black' };
           state.pieceCount++;
           if (type === 'king') {
-            if (isRed) state.redKingPos = { row: r, col: c };
-            else state.blackKingPos = { row: r, col: c };
+            if (isRed) { redKings++; state.redKingPos = { row: r, col: c }; }
+            else { blackKings++; state.blackKingPos = { row: r, col: c }; }
           }
+          placed = true;
           break;
         }
       }
+      if (!placed) throw new Error(`未知棋子「${ch}」`);
       c++;
     }
+    if (c !== COLS) throw new Error(`第 ${r + 1} 行不是 ${COLS} 路（實際 ${c}）`);
   }
+  if (redKings > 1) throw new Error('紅方超過一個帥');
+  if (blackKings > 1) throw new Error('黑方超過一個將');
 }
 
 export function updateFenInput() {

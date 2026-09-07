@@ -91,7 +91,6 @@ export function renderBoard() {
   }
 
   renderPieces();
-  setupDragDrop();
   updateStatus();
   updateFenInput();
 }
@@ -128,7 +127,6 @@ function handlePaletteDrop(e) {
   if (data.source === 'board') {
     removePiece(parseInt(data.fromRow), parseInt(data.fromCol));
     renderPieces();
-    setupDragDrop();
     updateStatus();
   }
 }
@@ -241,23 +239,42 @@ function highlightValidPositions(type, color) {
   });
 }
 
+let dragBound = false;
+
 export function setupDragDrop() {
-  document.querySelectorAll('#board .intersection').forEach(el => {
-    el.addEventListener('dragover', e => e.preventDefault());
-    el.addEventListener('drop', handleBoardDrop);
+  if (dragBound) return;
+  dragBound = true;
+
+  const boardEl = document.getElementById('board');
+  const pal = document.getElementById('palette');
+
+  boardEl.addEventListener('dragstart', e => {
+    const pieceEl = e.target.closest('.piece');
+    if (pieceEl) handlePieceDragStart.call(pieceEl, e);
+    else if (e.target.closest('.intersection')) e.preventDefault();
   });
-  document.querySelectorAll('#board .piece').forEach(el => {
-    el.addEventListener('dragstart', handlePieceDragStart);
-    el.addEventListener('dragend', handlePieceDragEnd);
-    el.addEventListener('dragover', e => e.preventDefault());
-    el.addEventListener('drop', handleBoardDrop);
+  boardEl.addEventListener('dragend', e => {
+    const pieceEl = e.target.closest('.piece');
+    if (pieceEl) handlePieceDragEnd.call(pieceEl, e);
   });
-  document.querySelectorAll('.piece-palette-item').forEach(el => {
-    el.addEventListener('dragstart', handlePaletteDragStart);
-    el.addEventListener('dragend', handlePaletteDragEnd);
+  boardEl.addEventListener('dragover', e => {
+    if (e.target.closest('.piece') || e.target.closest('.intersection')) e.preventDefault();
   });
-  document.getElementById('palette').addEventListener('dragover', e => e.preventDefault());
-  document.getElementById('palette').addEventListener('drop', handlePaletteDrop);
+  boardEl.addEventListener('drop', e => {
+    const target = e.target.closest('.piece') || e.target.closest('.intersection');
+    if (target) handleBoardDrop.call(target, e);
+  });
+
+  pal.addEventListener('dragstart', e => {
+    const item = e.target.closest('.piece-palette-item');
+    if (item) handlePaletteDragStart.call(item, e);
+  });
+  pal.addEventListener('dragend', e => {
+    const item = e.target.closest('.piece-palette-item');
+    if (item) handlePaletteDragEnd.call(item, e);
+  });
+  pal.addEventListener('dragover', e => e.preventDefault());
+  pal.addEventListener('drop', handlePaletteDrop);
 }
 
 function handlePaletteDragStart(e) {
@@ -287,7 +304,6 @@ function handlePieceDragEnd(e) {
     const fr = parseInt(this.dataset.row), fc = parseInt(this.dataset.col);
     removePiece(fr, fc);
     renderPieces();
-    setupDragDrop();
     updateStatus();
   }
 }
@@ -312,7 +328,6 @@ function handleBoardDrop(e) {
     movePiece(fr, fc, row, col);
   }
   renderPieces();
-  setupDragDrop();
   updateStatus();
 }
 
@@ -333,7 +348,6 @@ function restoreBoard(snapshot) {
     }
   }
   renderPieces();
-  setupDragDrop();
   updateStatus();
 }
 
