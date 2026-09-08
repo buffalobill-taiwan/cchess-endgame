@@ -123,6 +123,7 @@ export function renderPieces() {
 function handlePaletteDrop(e) {
   e.preventDefault();
   if (state.isAnalyzing) return;
+  clearHighlights();
   state._dragDropProcessed = true;
   const data = JSON.parse(e.dataTransfer.getData('text/plain'));
   if (data.source === 'board') {
@@ -258,13 +259,8 @@ export function setupDragDrop() {
     const pieceEl = e.target.closest('.piece');
     if (pieceEl) handlePieceDragEnd.call(pieceEl, e);
   });
-  boardEl.addEventListener('dragover', e => {
-    if (e.target.closest('.piece') || e.target.closest('.intersection')) e.preventDefault();
-  });
-  boardEl.addEventListener('drop', e => {
-    const target = e.target.closest('.piece') || e.target.closest('.intersection');
-    if (target) handleBoardDrop.call(target, e);
-  });
+  boardEl.addEventListener('dragover', e => e.preventDefault());
+  boardEl.addEventListener('drop', handleBoardDrop);
 
   pal.addEventListener('dragstart', e => {
     const item = e.target.closest('.piece-palette-item');
@@ -316,14 +312,24 @@ function handlePaletteDragEnd(e) {
   clearHighlights();
 }
 
+function boardCellFromEvent(e) {
+  const rect = document.getElementById('board').getBoundingClientRect();
+  const col = Math.round((e.clientX - rect.left - PAD) / CELL);
+  const row = Math.round((e.clientY - rect.top - PAD) / CELL);
+  if (col < 0 || col > COLS - 1 || row < 0 || row > ROWS - 1) return null;
+  return { row, col };
+}
+
 function handleBoardDrop(e) {
   e.preventDefault();
   if (state.isAnalyzing) return;
+  clearHighlights();
   state._dragDropProcessed = true;
-  const data = JSON.parse(e.dataTransfer.getData('text/plain'));
-  const row = parseInt(this.dataset.row);
-  const col = parseInt(this.dataset.col);
-  if (isNaN(row) || isNaN(col)) return;
+  let data;
+  try { data = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
+  const cell = boardCellFromEvent(e);
+  if (!cell) return;
+  const { row, col } = cell;
 
   if (data.source === 'palette') {
     placePiece(row, col, data.type, data.color);
