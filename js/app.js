@@ -2,12 +2,11 @@
 // MAIN ANALYZE + INIT
 // ═══════════════════════════════════════════
 
-import { MATE_VAL, ROOT_TIME_LIMIT, MIN_REF_DEPTH, MAX_DEPTH, DEFAULT_DEPTH } from './constants.js';
-import { state, initBoard, movesEqual } from './state.js';
-import { isCheckmate, isStalemate, generateLegalMoves } from './rules.js';
-import { moveToNotation, fenToBoard } from './notation.js';
-import { searchRootAsync } from './search.js';
-import { deepCopyBoard, applyBoardCopy, withBoard, syncKingPos, generateForcedMoves, pvToTree, buildRefutationBranch } from './tree.js';
+import { MAX_DEPTH, DEFAULT_DEPTH } from './constants.js';
+import { state, initBoard } from './state.js';
+import { fenToBoard } from './notation.js';
+import { deepCopyBoard, syncKingPos } from './tree.js';
+import { analyzePosition } from './analyze.js';
 import { renderBoard, renderPalette, setupDragDrop, updateStatus, renderPieces, showResult } from './ui.js';
 
 const LOCKABLE_IDS = ['btn-import-fen', 'btn-examples'];
@@ -19,19 +18,6 @@ function lockControls(lock) {
 function analyze() {
   if (state.isAnalyzing) return;
   syncKingPos(state.board);
-  if (!state.redKingPos || !state.blackKingPos) {
-    document.getElementById('result-content').innerHTML = '<p>請先擺放紅黑將帥</p>';
-    return;
-  }
-  if (isCheckmate(state.board, 'red')) {
-    document.getElementById('result-content').innerHTML = '<p>紅方死棋，黑方勝</p>';
-    return;
-  }
-  if (isStalemate(state.board, 'red')) {
-    document.getElementById('result-content').innerHTML = '<p>紅方困斃，黑方勝</p>';
-    return;
-  }
-
   state.continuousCheck = document.getElementById('chk-continuous-check').checked;
   document.getElementById('chk-continuous-check').disabled = true;
   document.querySelector('.chk-row').classList.add('disabled');
@@ -46,119 +32,18 @@ function analyze() {
   document.getElementById('result-content').innerHTML = '<p>分析中，請稍候...</p>';
 
   const initialBoard = deepCopyBoard(state.board);
-  const boardCopy = deepCopyBoard(state.board);
   const slider = Math.min(12, Math.max(1, parseInt(document.getElementById('depth-slider').value) || DEFAULT_DEPTH));
   const depth = Math.min(MAX_DEPTH, slider * 2);
   (async () => {
     try {
-      const result = await searchRootAsync(boardCopy, depth, ROOT_TIME_LIMIT);
-      let tree = null;
-      if (result && result.move) {
-        const isMateScore = Math.abs(result.score) > MATE_VAL / 2;
-        if (state.continuousCheck && !isMateScore) {
-          tree = null;
-        } else if (isMateScore && result.score < 0) {
-          tree = { move: null, notation: '', color: 'red', isMate: false, isStalemate: false, children: [], board: null };
-          const redMoves = generateForcedMoves(boardCopy, 'red');
-          const cfg = {
-            refDepth: Math.max(MIN_REF_DEPTH, depth - 2),
-            refDepth2: Math.max(MIN_REF_DEPTH, depth - 4),
-            pvStartDepth: 3, pvMaxDepth: depth, flatOnNonMate: false,
-          };
-          for (const rm of redMoves) {
-            if (state.interruptRequested) break;
-            const rmBoard = applyBoardCopy(boardCopy, rm);
-            const rmState = withBoard(rmBoard, () => ({
-              isMate: isCheckmate(rmBoard, 'black'),
-              isStalemate: isStalemate(rmBoard, 'black'),
-            }));
-            if (rmState.isMate || rmState.isStalemate) {
-              tree.children.push({
-                move: rm, notation: moveToNotation(boardCopy, rm, 'red'),
-                color: 'red', isMate: rmState.isMate, isStalemate: rmState.isStalemate,
-                children: [], board: deepCopyBoard(rmBoard)
-              });
-            } else {
-              const refChildren = await buildRefutationBranch(rmBoard, 'red', 'black', cfg);
-              if (refChildren.length === 0) continue;
-              tree.children.push({
-                move: rm, notation: moveToNotation(boardCopy, rm, 'red'),
-                color: 'red', isMate: rmState.isMate, isStalemate: rmState.isStalemate,
-                children: refChildren, board: deepCopyBoard(rmBoard)
-              });
-            }
-          }
-        } else {
-          const nb = applyBoardCopy(boardCopy, result.move);
-          const nbState = withBoard(nb, () => ({
-            isMate: isCheckmate(nb, 'black'),
-            isStalemate: isStalemate(nb, 'black'),
-          }));
-          const restPV = result.pv.slice(1);
-          tree = {
-            move: result.move, notation: moveToNotation(boardCopy, result.move, 'red'),
-            color: 'red', isMate: nbState.isMate, isStalemate: nbState.isStalemate, children: [],
-            board: deepCopyBoard(nb)
-          };
-
-          syncKingPos(nb);
-          const blackMoves = generateLegalMoves(nb, 'black');
-          const cfg = {
-            refDepth: Math.max(MIN_REF_DEPTH, depth - 2),
-            refDepth2: Math.max(MIN_REF_DEPTH, depth - 4),
-            pvStartDepth: 3, pvMaxDepth: depth, flatOnNonMate: false,
-          };
-          for (const bm of blackMoves) {
-            if (state.interruptRequested) break;
-            const bmBoard = applyBoardCopy(nb, bm);
-            const isPV = restPV.length > 0 && movesEqual(bm, restPV[0]);
-            const bmState = withBoard(bmBoard, () => ({
-              isMate: isCheckmate(bmBoard, 'red'),
-              isStalemate: isStalemate(bmBoard, 'red'),
-            }));
-            let childNode;
-
-            if (isPV) {
-              const sub = await pvToTree(bmBoard, restPV.slice(1), 'red', 1, depth, Date.now());
-              childNode = {
-                move: bm, notation: moveToNotation(nb, bm, 'black'),
-                color: 'black',
-                isMate: bmState.isMate, isStalemate: bmState.isStalemate,
-                children: sub ? [sub] : [],
-                board: deepCopyBoard(bmBoard)
-              };
-              if (!childNode.isMate && !childNode.isStalemate && childNode.children.length === 0) {
-                const re = withBoard(bmBoard, () => ({
-                  isMate: isCheckmate(bmBoard, 'red'),
-                  isStalemate: isStalemate(bmBoard, 'red'),
-                }));
-                if (re.isMate) childNode.isMate = true;
-                else if (re.isStalemate) childNode.isStalemate = true;
-                else childNode.interrupted = true;
-              }
-            } else if (bmState.isMate || bmState.isStalemate) {
-              childNode = {
-                move: bm, notation: moveToNotation(nb, bm, 'black'),
-                color: 'black',
-                isMate: bmState.isMate, isStalemate: bmState.isStalemate,
-                children: [], board: deepCopyBoard(bmBoard)
-              };
-            } else {
-              const refChildren = await buildRefutationBranch(bmBoard, 'black', 'red', cfg);
-              if (refChildren.length === 0) continue;
-              childNode = {
-                move: bm, notation: moveToNotation(nb, bm, 'black'),
-                color: 'black',
-                isMate: bmState.isMate, isStalemate: bmState.isStalemate,
-                children: refChildren, board: deepCopyBoard(bmBoard)
-              };
-            }
-            tree.children.push(childNode);
-          }
-        }
-      }
-      const wasInterrupted = state.interruptRequested;
-      showResult(tree, wasInterrupted ? 0 : (result ? result.score : 0), wasInterrupted, initialBoard);
+      const res = await analyzePosition(initialBoard, { depth, continuousCheck: state.continuousCheck });
+      const msg = {
+        noKing: '請先擺放紅黑將帥',
+        redMated: '紅方死棋，黑方勝',
+        redStalemated: '紅方困斃，黑方勝',
+      }[res.status];
+      if (msg) { document.getElementById('result-content').innerHTML = `<p>${msg}</p>`; return; }
+      showResult(res.tree, res.interrupted ? 0 : res.score, res.interrupted, initialBoard);
     } catch (e) {
       document.getElementById('result-content').innerHTML = `<p>分析錯誤：${e.message}</p>`;
     } finally {
