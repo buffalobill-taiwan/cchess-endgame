@@ -122,6 +122,7 @@ export function renderPieces() {
 
 function handlePaletteDrop(e) {
   e.preventDefault();
+  if (state.isAnalyzing) return;
   state._dragDropProcessed = true;
   const data = JSON.parse(e.dataTransfer.getData('text/plain'));
   if (data.source === 'board') {
@@ -278,6 +279,7 @@ export function setupDragDrop() {
 }
 
 function handlePaletteDragStart(e) {
+  if (state.isAnalyzing) { e.preventDefault(); return; }
   state._dragDropProcessed = false;
   highlightValidPositions(this.dataset.type, this.dataset.color);
   e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -287,6 +289,7 @@ function handlePaletteDragStart(e) {
 }
 
 function handlePieceDragStart(e) {
+  if (state.isAnalyzing) { e.preventDefault(); return; }
   state._dragDropProcessed = false;
   highlightValidPositions(this.dataset.type, this.dataset.color);
   e.dataTransfer.setData('text/plain', JSON.stringify({
@@ -300,6 +303,7 @@ function handlePieceDragStart(e) {
 function handlePieceDragEnd(e) {
   this.classList.remove('dragging');
   clearHighlights();
+  if (state.isAnalyzing) return;
   if (!state._dragDropProcessed) {
     const fr = parseInt(this.dataset.row), fc = parseInt(this.dataset.col);
     removePiece(fr, fc);
@@ -314,6 +318,7 @@ function handlePaletteDragEnd(e) {
 
 function handleBoardDrop(e) {
   e.preventDefault();
+  if (state.isAnalyzing) return;
   state._dragDropProcessed = true;
   const data = JSON.parse(e.dataTransfer.getData('text/plain'));
   const row = parseInt(this.dataset.row);

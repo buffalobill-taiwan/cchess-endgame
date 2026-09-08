@@ -10,6 +10,12 @@ import { searchRootAsync } from './search.js';
 import { deepCopyBoard, applyBoardCopy, withBoard, syncKingPos, generateForcedMoves, pvToTree, buildRefutationBranch } from './tree.js';
 import { renderBoard, renderPalette, setupDragDrop, updateStatus, renderPieces, showResult } from './ui.js';
 
+const LOCKABLE_IDS = ['btn-import-fen', 'btn-examples'];
+function lockControls(lock) {
+  for (const id of LOCKABLE_IDS) document.getElementById(id).disabled = lock;
+  document.getElementById('depth-slider').disabled = lock;
+}
+
 function analyze() {
   if (state.isAnalyzing) return;
   if (!state.redKingPos || !state.blackKingPos) {
@@ -31,6 +37,7 @@ function analyze() {
 
   state.isAnalyzing = true;
   state.interruptRequested = false;
+  lockControls(true);
   updateStatus();
   const btn = document.getElementById('btn-analyze');
   btn.textContent = '分析中...';
@@ -157,6 +164,7 @@ function analyze() {
       state.interruptRequested = false;
       document.getElementById('chk-continuous-check').disabled = false;
       document.querySelector('.chk-row').classList.remove('disabled');
+      lockControls(false);
       btn.textContent = '分析';
       document.getElementById('btn-interrupt').style.display = 'none';
       updateStatus();
@@ -190,6 +198,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   document.getElementById('btn-import-fen').addEventListener('click', () => {
+    if (state.isAnalyzing) return;
     const fen = document.getElementById('fen-input').value.trim();
     if (!fen) {
       alert('請先在上方欄位輸入或貼上 FEN 編碼');
@@ -269,6 +278,7 @@ document.addEventListener('DOMContentLoaded', () => {
         loadBtn.className = 'example-load';
         loadBtn.textContent = '載入';
         loadBtn.addEventListener('click', () => {
+          if (state.isAnalyzing) return;
           try {
             fenToBoard(items[i].fen);
             renderPieces();
@@ -284,6 +294,7 @@ document.addEventListener('DOMContentLoaded', () => {
         delBtn.className = 'example-del';
         delBtn.textContent = '刪除';
         delBtn.addEventListener('click', () => {
+          if (state.isAnalyzing) return;
           const cur = loadExamples();
           cur.splice(i, 1);
           saveExamples(cur);
@@ -311,6 +322,7 @@ document.addEventListener('DOMContentLoaded', () => {
       addBtn.className = 'example-add-btn';
       addBtn.textContent = '新增';
       addBtn.addEventListener('click', () => {
+        if (state.isAnalyzing) return;
         const l = labelInput.value.trim();
         const f = fenInput.value.trim();
         if (!l || !f) { alert('請輸入名稱與 FEN'); return; }
