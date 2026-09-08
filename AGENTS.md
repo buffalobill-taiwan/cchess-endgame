@@ -9,4 +9,5 @@
 - FEN import/export via the text input field (click field to select, "匯入" button to import)
 - Placement (`canPlaceAt`): king/advisor→palace, elephant→7 fixed own-side positions, soldier (pre-river)→row 5/6 (red) or 3/4 (black), col 0/2/4/6/8
 - Click a result tree node to restore board to that position; drag a piece off the board (to palette area) to remove it
+- Drag-and-drop is mouse-only (pointer events); 行動裝置/touch 不在考量範圍，不需處理 touch 事件或行動版布局
 - No lint/format/test commands exist
