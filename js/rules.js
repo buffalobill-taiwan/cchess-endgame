@@ -5,6 +5,7 @@
 import { ROWS, COLS } from './constants.js';
 import { opp, inPalace, onOwnSide } from './state.js';
 import { findKings } from './board.js';
+import { PIECE_INDEX, ZOBRIST_PIECE_LO, ZOBRIST_PIECE_HI, ZOBRIST_SIDE_LO, ZOBRIST_SIDE_HI } from './zobrist.js';
 
 function isLineClear(board, fr, fc, tr, tc) {
   if (fr === tr) {
@@ -223,15 +224,49 @@ export function generateLegalMoves(b, color) {
 }
 
 // ─── make/unmake (incremental, pure board mutation) ───
-export function makeMove(b, move) {
+// An optional `hash` object ({lo, hi}) is XOR-updated in place when provided.
+
+export function makeMove(b, move, hash) {
   const captured = b[move.to.row][move.to.col];
   const moved = b[move.from.row][move.from.col];
   b[move.to.row][move.to.col] = moved;
   b[move.from.row][move.from.col] = null;
-  return { captured, moved, from:move.from, to:move.to };
+  if (hash && moved) {
+    const movedIdx = PIECE_INDEX[moved.color][moved.type];
+    const fromSq = move.from.row * COLS + move.from.col;
+    const toSq = move.to.row * COLS + move.to.col;
+    hash.lo ^= ZOBRIST_PIECE_LO[movedIdx][fromSq];
+    hash.hi ^= ZOBRIST_PIECE_HI[movedIdx][fromSq];
+    if (captured) {
+      const capIdx = PIECE_INDEX[captured.color][captured.type];
+      hash.lo ^= ZOBRIST_PIECE_LO[capIdx][toSq];
+      hash.hi ^= ZOBRIST_PIECE_HI[capIdx][toSq];
+    }
+    hash.lo ^= ZOBRIST_PIECE_LO[movedIdx][toSq];
+    hash.hi ^= ZOBRIST_PIECE_HI[movedIdx][toSq];
+    hash.lo ^= ZOBRIST_SIDE_LO;
+    hash.hi ^= ZOBRIST_SIDE_HI;
+  }
+  return { captured, moved, from: move.from, to: move.to };
 }
 
-export function unmakeMove(b, move, undo) {
+export function unmakeMove(b, move, undo, hash) {
+  if (hash && undo.moved) {
+    const movedIdx = PIECE_INDEX[undo.moved.color][undo.moved.type];
+    const fromSq = move.from.row * COLS + move.from.col;
+    const toSq = move.to.row * COLS + move.to.col;
+    hash.lo ^= ZOBRIST_PIECE_LO[movedIdx][toSq];
+    hash.hi ^= ZOBRIST_PIECE_HI[movedIdx][toSq];
+    hash.lo ^= ZOBRIST_PIECE_LO[movedIdx][fromSq];
+    hash.hi ^= ZOBRIST_PIECE_HI[movedIdx][fromSq];
+    if (undo.captured) {
+      const capIdx = PIECE_INDEX[undo.captured.color][undo.captured.type];
+      hash.lo ^= ZOBRIST_PIECE_LO[capIdx][toSq];
+      hash.hi ^= ZOBRIST_PIECE_HI[capIdx][toSq];
+    }
+    hash.lo ^= ZOBRIST_SIDE_LO;
+    hash.hi ^= ZOBRIST_SIDE_HI;
+  }
   b[move.from.row][move.from.col] = undo.moved;
   b[move.to.row][move.to.col] = undo.captured;
 }

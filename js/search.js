@@ -2,10 +2,10 @@
 // SEARCH ENGINE
 // ═══════════════════════════════════════════
 
-import { ROWS, COLS, PIECE_VALUES, MATE_VAL, INF } from './constants.js';
+import { ROWS, COLS, PIECE_VALUES, MATE_VAL, INF, TT_SIZE, TT_MASK } from './constants.js';
 import { state, opp, movesEqual } from './state.js';
 import { isInCheck, generateLegalMoves, makeMove, unmakeMove } from './rules.js';
-import { PIECE_TO_FEN } from './notation.js';
+import { zobristFromBoard } from './zobrist.js';
 
 // ─── Static evaluation (material + small positional terms) ───
 
@@ -105,23 +105,13 @@ function orderMoves(moves, b, ttMove, killers, ply) {
   for (let i = 0; i < moves.length; i++) moves[i] = scored[i].m;
 }
 
-// ─── Board key + transposition table ───
-
-function boardKey(b, color) {
-  let k = '';
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      const p = b[r][c];
-      k += p ? PIECE_TO_FEN[p.color][p.type] : '.';
-    }
-  }
-  return k + (color === 'red' ? 'w' : 'b');
-}
+// ─── Zobrist + transposition table ───
 
 const TT_FLAG = { UPPER: -1, EXACT: 0, LOWER: 1 };
 
-function ttKey(b, color) {
-  return boardKey(b, color) + (state.continuousCheck ? 'c' : 'n');
+// Compact 64-bit Zobrist key for repetition detection (exact, collision-free).
+function repKey(h) {
+  return ((BigInt(h.lo) & 0xFFFFFFFFn) << 32n) | (BigInt(h.hi) & 0xFFFFFFFFn);
 }
 
 // ─── Quiescence search (captures + check evasions at the horizon) ───
@@ -130,10 +120,19 @@ function generateCaptureMoves(b, color) {
   return generateLegalMoves(b, color).filter(m => b[m.to.row][m.to.col]);
 }
 
-function quiesce(b, color, alpha, beta, ctx, ply) {
+function quiesce(b, color, alpha, beta, ctx, ply, hash) {
   if (state.interruptRequested) return evaluate(b);
   if (Date.now() - ctx.startTime > ctx.timeLimit) return evaluate(b);
   if (ply > 64) return evaluate(b);
+
+  const ttIdx = hash.lo & TT_MASK;
+  const ttEntry = ctx.tt[ttIdx];
+  const ttHit = !!ttEntry && ttEntry.hashLo === hash.lo && ttEntry.hashHi === hash.hi;
+  if (ttHit) {
+    if (ttEntry.flag === TT_FLAG.EXACT) return ttEntry.score;
+    if (ttEntry.flag === TT_FLAG.LOWER && ttEntry.score >= beta) return ttEntry.score;
+    if (ttEntry.flag === TT_FLAG.UPPER && ttEntry.score <= alpha) return ttEntry.score;
+  }
 
   const inCheck = isInCheck(b, color);
   const standPat = evaluate(b);
@@ -141,15 +140,18 @@ function quiesce(b, color, alpha, beta, ctx, ply) {
   if (inCheck) {
     let moves = generateLegalMoves(b, color);
     if (moves.length === 0) {
-      return (color === 'red' ? -1 : 1) * (MATE_VAL - ctx.maxDepth - ply);
+      const s = (color === 'red' ? -1 : 1) * (MATE_VAL - ctx.maxDepth - ply);
+      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: 0, score: s, flag: TT_FLAG.EXACT, move: null };
+      return s;
     }
-    orderMoves(moves, b, null, ctx.killers, ply);
+    const alpha0 = alpha, beta0 = beta;
+    orderMoves(moves, b, ttHit ? ttEntry.move : null, ctx.killers, ply);
     let bestScore = color === 'red' ? -INF : INF;
     for (const m of moves) {
       if (state.interruptRequested) break;
-      const undo = makeMove(b, m);
-      const s = quiesce(b, opp(color), alpha, beta, ctx, ply + 1);
-      unmakeMove(b, m, undo);
+      const undo = makeMove(b, m, hash);
+      const s = quiesce(b, opp(color), alpha, beta, ctx, ply + 1, hash);
+      unmakeMove(b, m, undo, hash);
       if (color === 'red') {
         bestScore = Math.max(bestScore, s);
         alpha = Math.max(alpha, bestScore);
@@ -158,6 +160,13 @@ function quiesce(b, color, alpha, beta, ctx, ply) {
         beta = Math.min(beta, bestScore);
       }
       if (alpha >= beta) break;
+    }
+    if (!state.interruptRequested) {
+      let flag;
+      if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
+      else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
+      else flag = TT_FLAG.EXACT;
+      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: 0, score: bestScore, flag, move: null };
     }
     return bestScore;
   }
@@ -172,11 +181,12 @@ function quiesce(b, color, alpha, beta, ctx, ply) {
 
   const caps = generateCaptureMoves(b, color);
   orderMoves(caps, b, null, [], 0);
+  const alpha0 = alpha, beta0 = beta;
   for (const m of caps) {
     if (state.interruptRequested) break;
-    const undo = makeMove(b, m);
-    const s = quiesce(b, opp(color), alpha, beta, ctx, ply + 1);
-    unmakeMove(b, m, undo);
+    const undo = makeMove(b, m, hash);
+    const s = quiesce(b, opp(color), alpha, beta, ctx, ply + 1, hash);
+    unmakeMove(b, m, undo, hash);
     if (color === 'red') {
       if (s > alpha) {
         alpha = s;
@@ -189,36 +199,46 @@ function quiesce(b, color, alpha, beta, ctx, ply) {
       }
     }
   }
-  return color === 'red' ? alpha : beta;
+  const bestScore = color === 'red' ? alpha : beta;
+  if (!state.interruptRequested) {
+    let flag;
+    if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
+    else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
+    else flag = TT_FLAG.EXACT;
+    ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: 0, score: bestScore, flag, move: null };
+  }
+  return bestScore;
 }
 
 // ─── Alpha-beta with TT and repetition detection ───
 
-async function alphaBeta(b, color, depth, alpha, beta, ctx) {
+async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
   if (state.interruptRequested) return { score: evaluate(b), move: null, pv: [] };
   if (Date.now() - ctx.startTime > ctx.timeLimit) return { score: evaluate(b), move: null, pv: [] };
 
-  const key = ttKey(b, color);
-  if (ctx.repSet.has(key)) {
+  const rk = repKey(hash);
+  if (ctx.repSet.has(rk)) {
     ctx.repCount++;
     return { score: 0, move: null, pv: [] };
   }
-  ctx.repSet.add(key);
+  ctx.repSet.add(rk);
   const repBase = ctx.repCount;
 
   try {
     const remDepth = ctx.maxDepth - depth;
     if (remDepth <= 0) {
-      return { score: quiesce(b, color, alpha, beta, ctx, 0), move: null, pv: [] };
+      return { score: quiesce(b, color, alpha, beta, ctx, 0, hash), move: null, pv: [] };
     }
 
-    const ttEntry = ctx.tt.get(key);
-    if (ttEntry && ttEntry.depth >= remDepth) {
+    const ttIdx = hash.lo & TT_MASK;
+    const ttEntry = ctx.tt[ttIdx];
+    const ttHit = !!ttEntry && ttEntry.hashLo === hash.lo && ttEntry.hashHi === hash.hi;
+    if (ttHit && ttEntry.depth >= remDepth) {
       if (ttEntry.flag === TT_FLAG.EXACT) return { score: ttEntry.score, move: ttEntry.move, pv: [] };
       if (ttEntry.flag === TT_FLAG.LOWER && ttEntry.score >= beta) return { score: ttEntry.score, move: ttEntry.move, pv: [] };
       if (ttEntry.flag === TT_FLAG.UPPER && ttEntry.score <= alpha) return { score: ttEntry.score, move: ttEntry.move, pv: [] };
     }
-    const ttMove = ttEntry ? ttEntry.move : null;
+    const ttMove = ttHit ? ttEntry.move : null;
 
     let moves = generateLegalMoves(b, color);
     if (state.continuousCheck && color === 'red') {
@@ -231,7 +251,7 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx) {
     }
     if (moves.length === 0) {
       const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
-      ctx.tt.set(key, { depth: remDepth, score: s, flag: TT_FLAG.EXACT, move: null });
+      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: remDepth, score: s, flag: TT_FLAG.EXACT, move: null };
       return { score: s, move: null, pv: [] };
     }
 
@@ -251,9 +271,9 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx) {
         if (Date.now() - ctx.startTime > ctx.timeLimit) break;
       }
 
-      const undo = makeMove(b, m);
-      const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, ctx);
-      unmakeMove(b, m, undo);
+      const undo = makeMove(b, m, hash);
+      const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, ctx, hash);
+      unmakeMove(b, m, undo, hash);
 
       if (color === 'red') {
         if (r.score > bestScore) {
@@ -276,13 +296,12 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx) {
     else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
     else flag = TT_FLAG.EXACT;
     if (ctx.repCount === repBase) {
-      if (ctx.tt.size > 262144) ctx.tt.clear();
-      ctx.tt.set(key, { depth: remDepth, score: bestScore, flag, move: bestMove });
+      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: remDepth, score: bestScore, flag, move: bestMove };
     }
 
     return { score: bestScore, move: bestMove, pv: bestPV };
   } finally {
-    ctx.repSet.delete(key);
+    ctx.repSet.delete(rk);
   }
 }
 
@@ -301,30 +320,31 @@ function cloneBoard(b) {
 async function extendMatePV(board, pv, startTime, timeLimit) {
   const b = cloneBoard(board);
   let color = 'red';
-  const lineKeys = new Set([ttKey(b, color)]);
+  const h = zobristFromBoard(b, color, state.continuousCheck);
+  const lineKeys = new Set([repKey(h)]);
   for (const m of pv) {
-    makeMove(b, m);
+    makeMove(b, m, h);
     color = opp(color);
-    if (lineKeys.has(ttKey(b, color))) return { extended: pv, verified: false };
-    lineKeys.add(ttKey(b, color));
+    if (lineKeys.has(repKey(h))) return { extended: pv, verified: false };
+    lineKeys.add(repKey(h));
   }
   const extended = pv.slice();
   for (let i = 0; i < 40; i++) {
     if (Date.now() - startTime > timeLimit) break;
     if (generateLegalMoves(b, color).length === 0) return { extended, verified: true };
     const seed = new Set(lineKeys);
-    seed.delete(ttKey(b, color));
+    seed.delete(repKey(h));
     const ctx = {
       startTime, timeLimit, maxDepth: 4,
-      repSet: seed, tt: new Map(), killers: [], repCount: 0,
+      repSet: seed, tt: new Array(TT_SIZE), killers: [], repCount: 0,
       yieldState: { lastYield: Date.now() },
     };
-    const r = await alphaBeta(b, color, 0, -INF, INF, ctx);
+    const r = await alphaBeta(b, color, 0, -INF, INF, ctx, h);
     if (!r.move) break;
-    makeMove(b, r.move);
+    makeMove(b, r.move, h);
     color = opp(color);
-    if (lineKeys.has(ttKey(b, color))) break;
-    lineKeys.add(ttKey(b, color));
+    if (lineKeys.has(repKey(h))) break;
+    lineKeys.add(repKey(h));
     extended.push(r.move);
   }
   if (generateLegalMoves(b, color).length === 0) return { extended, verified: true };
@@ -334,8 +354,9 @@ async function extendMatePV(board, pv, startTime, timeLimit) {
 export async function searchRootAsync(b, maxDepth, timeLimit) {
   const startTime = Date.now();
   let best = { score: 0, move: null, pv: [] };
-  const tt = new Map();
+  const tt = new Array(TT_SIZE);
   const killers = [];
+  const rootHash = zobristFromBoard(b, 'red', state.continuousCheck);
   for (let d = 1; d <= maxDepth; d++) {
     if (state.interruptRequested) break;
     const ctx = {
@@ -343,7 +364,7 @@ export async function searchRootAsync(b, maxDepth, timeLimit) {
       repSet: new Set(), tt, killers, repCount: 0,
       yieldState: { lastYield: Date.now() },
     };
-    const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx);
+    const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx, rootHash);
     best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) {
       const { extended, verified } = await extendMatePV(b, r.pv, startTime, timeLimit);
@@ -361,8 +382,9 @@ export async function searchRootAsync(b, maxDepth, timeLimit) {
 
 export async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
   let best = { score: 0, move: null, pv: [] };
-  const tt = new Map();
+  const tt = new Array(TT_SIZE);
   const killers = [];
+  const rootHash = zobristFromBoard(b, color, state.continuousCheck);
   for (let d = 2; d <= maxDepth; d += 2) {
     if (state.interruptRequested || Date.now() - startTime > timeLimit) break;
     const ctx = {
@@ -370,7 +392,7 @@ export async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
       repSet: new Set(), tt, killers, repCount: 0,
       yieldState: { lastYield: Date.now() },
     };
-    const r = await alphaBeta(b, color, 0, -INF, INF, ctx);
+    const r = await alphaBeta(b, color, 0, -INF, INF, ctx, rootHash);
     if (Math.abs(r.score) > MATE_VAL / 2) {
       const { extended, verified } = await extendMatePV(b, r.pv, startTime, timeLimit);
       if (!verified) continue;

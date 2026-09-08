@@ -11,6 +11,9 @@ export const PIECE_VALUES = { king:10000, chariot:900, cannon:450, horse:400, el
 export const MATE_VAL = 100000, INF = 999999;
 export const TYPES = ['chariot','horse','cannon','advisor','elephant','soldier','king'];
 
+export const TT_SIZE = 1 << 20;
+export const TT_MASK = TT_SIZE - 1;
+
 export const ROOT_TIME_LIMIT = 15000;
 export const REFUTATION_TIME_LIMIT = 5000;
 export const MIN_REF_DEPTH = 4;
