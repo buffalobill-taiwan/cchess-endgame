@@ -192,9 +192,9 @@ function quiesce(b, color, alpha, beta, ctx, ply) {
   return color === 'red' ? alpha : beta;
 }
 
-// ─── Alpha-beta with TT, check extensions, repetition detection ───
+// ─── Alpha-beta with TT and repetition detection ───
 
-async function alphaBeta(b, color, depth, alpha, beta, ctx, checkExt) {
+async function alphaBeta(b, color, depth, alpha, beta, ctx) {
   if (state.interruptRequested) return { score: evaluate(b), move: null, pv: [] };
   if (Date.now() - ctx.startTime > ctx.timeLimit) return { score: evaluate(b), move: null, pv: [] };
 
@@ -203,9 +203,7 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, checkExt) {
   ctx.repSet.add(key);
 
   try {
-    const inCheck = isInCheck(b, color);
-    const actualMax = inCheck ? ctx.maxDepth + 1 : ctx.maxDepth;
-    const remDepth = actualMax + checkExt - depth;
+    const remDepth = ctx.maxDepth - depth;
     if (remDepth <= 0) {
       return { score: quiesce(b, color, alpha, beta, ctx, 0), move: null, pv: [] };
     }
@@ -250,9 +248,7 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, checkExt) {
       }
 
       const undo = makeMove(b, m);
-      const givesCheck = isInCheck(b, opp(color));
-      const nextExt = givesCheck && checkExt < 3 ? checkExt + 1 : checkExt;
-      const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, ctx, nextExt);
+      const r = await alphaBeta(b, opp(color), depth + 1, alpha, beta, ctx);
       unmakeMove(b, m, undo);
 
       if (color === 'red') {
@@ -309,7 +305,7 @@ async function extendMatePV(board, pv, startTime, timeLimit) {
       repSet: new Set(), tt: new Map(), killers: [],
       yieldState: { lastYield: Date.now() },
     };
-    const r = await alphaBeta(b, color, 0, -INF, INF, ctx, 0);
+    const r = await alphaBeta(b, color, 0, -INF, INF, ctx);
     if (!r.move) break;
     extended.push(r.move);
     makeMove(b, r.move);
@@ -330,7 +326,7 @@ export async function searchRootAsync(b, maxDepth, timeLimit) {
       repSet: new Set(), tt, killers,
       yieldState: { lastYield: Date.now() },
     };
-    const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx, 0);
+    const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx);
     if (Date.now() - startTime >= timeLimit) break;
     best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) {
@@ -352,7 +348,7 @@ export async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
       repSet: new Set(), tt, killers,
       yieldState: { lastYield: Date.now() },
     };
-    const r = await alphaBeta(b, color, 0, -INF, INF, ctx, 0);
+    const r = await alphaBeta(b, color, 0, -INF, INF, ctx);
     if (r.move) best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) {
       if (!best.move) best = r;

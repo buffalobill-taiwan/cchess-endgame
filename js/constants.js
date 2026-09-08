@@ -14,5 +14,5 @@ export const TYPES = ['chariot','horse','cannon','advisor','elephant','soldier',
 export const ROOT_TIME_LIMIT = 15000;
 export const REFUTATION_TIME_LIMIT = 5000;
 export const MIN_REF_DEPTH = 4;
-export const MAX_DEPTH = 20;
-export const DEFAULT_DEPTH = 12;
+export const MAX_DEPTH = 24;
+export const DEFAULT_DEPTH = 6;

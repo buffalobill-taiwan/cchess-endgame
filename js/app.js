@@ -18,6 +18,7 @@ function lockControls(lock) {
 
 function analyze() {
   if (state.isAnalyzing) return;
+  syncKingPos(state.board);
   if (!state.redKingPos || !state.blackKingPos) {
     document.getElementById('result-content').innerHTML = '<p>請先擺放紅黑將帥</p>';
     return;
@@ -46,7 +47,8 @@ function analyze() {
 
   const initialBoard = deepCopyBoard(state.board);
   const boardCopy = deepCopyBoard(state.board);
-  const depth = Math.min(MAX_DEPTH, Math.max(1, parseInt(document.getElementById('depth-slider').value) || DEFAULT_DEPTH));
+  const slider = Math.min(12, Math.max(1, parseInt(document.getElementById('depth-slider').value) || DEFAULT_DEPTH));
+  const depth = Math.min(MAX_DEPTH, slider * 2);
   (async () => {
     try {
       const result = await searchRootAsync(boardCopy, depth, ROOT_TIME_LIMIT);
@@ -167,6 +169,7 @@ function analyze() {
       lockControls(false);
       btn.textContent = '分析';
       document.getElementById('btn-interrupt').style.display = 'none';
+      syncKingPos(state.board);
       updateStatus();
     }
   })();
