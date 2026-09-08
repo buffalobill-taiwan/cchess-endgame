@@ -2,64 +2,26 @@
 // RESULT TREE
 // ═══════════════════════════════════════════
 
-import { ROWS, COLS, MATE_VAL, REFUTATION_TIME_LIMIT, MIN_REF_DEPTH } from './constants.js';
+import { MATE_VAL, REFUTATION_TIME_LIMIT, MIN_REF_DEPTH } from './constants.js';
 import { state, opp, movesEqual } from './state.js';
 import { isInCheck, isCheckmate, isStalemate, generateLegalMoves } from './rules.js';
+import { deepCopyBoard, applyBoardCopy } from './board.js';
 import { moveToNotation } from './notation.js';
 import { findRefutation } from './search.js';
-
-export function deepCopyBoard(src) {
-  return src.map(row => row.map(cell => cell ? { type: cell.type, color: cell.color } : null));
-}
-
-// Applies a move to a fresh copy. Pure: never touches global kingpos.
-// Whenever a rules-engine function needs to inspect a board, use withBoard()
-// so the global king-position invariant stays intact.
-export function applyBoardCopy(src, move) {
-  const nb = src.map(row => row.map(cell => cell ? { ...cell } : null));
-  nb[move.to.row][move.to.col] = nb[move.from.row][move.from.col];
-  nb[move.from.row][move.from.col] = null;
-  return nb;
-}
-
-export function syncKingPos(b) {
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (b[r][c] && b[r][c].type === 'king') {
-        if (b[r][c].color === 'red') state.redKingPos = { row: r, col: c };
-        else state.blackKingPos = { row: r, col: c };
-      }
-    }
-  }
-}
-
-// Temporarily make nb the globally-tracked board for the duration of fn(),
-// then restore the previous king positions. fn receives nb.
-export function withBoard(nb, fn) {
-  const savedRK = state.redKingPos, savedBK = state.blackKingPos;
-  syncKingPos(nb);
-  try {
-    return fn(nb);
-  } finally {
-    state.redKingPos = savedRK;
-    state.blackKingPos = savedBK;
-  }
-}
 
 // Legal moves for `side`, restricted to check-giving moves when the
 // 連將殺 (continuous-check) mode is on and the side to move is red.
 export function generateForcedMoves(b, side) {
-  syncKingPos(b);
   const moves = generateLegalMoves(b, side);
   if (!state.continuousCheck || side !== 'red') return moves;
-  return moves.filter(m => withBoard(applyBoardCopy(b, m), nb => isInCheck(nb, 'black')));
+  return moves.filter(m => isInCheck(applyBoardCopy(b, m), 'black'));
 }
 
 function evalOn(b, color) {
-  return withBoard(b, () => ({
+  return {
     isMate: isCheckmate(b, color),
     isStalemate: isStalemate(b, color),
-  }));
+  };
 }
 
 // Refute `mover`'s continuations from position `pos` (turn = `mover`) by
@@ -67,7 +29,6 @@ function evalOn(b, color) {
 // mover's node, or [] when no refutation was found. Kept in sync between
 // app.js (main-line branch) and pvToTree (variant expansion).
 export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
-  syncKingPos(pos);
   const ref = await findRefutation(pos, searchColor, cfg.refDepth, Date.now(), REFUTATION_TIME_LIMIT);
   if (!ref || !ref.move) return [];
 
@@ -87,7 +48,6 @@ export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
       if (state.interruptRequested) break;
       const rrBoard = applyBoardCopy(refBoard, rr);
       const rrState = evalOn(rrBoard, searchColor);
-      syncKingPos(rrBoard);
       const ref2 = await findRefutation(rrBoard, searchColor, cfg.refDepth2, Date.now(), REFUTATION_TIME_LIMIT);
       const children2 = [];
       if (ref2 && ref2.move && Math.abs(ref2.score) > MATE_VAL / 2) {

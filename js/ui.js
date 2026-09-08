@@ -5,8 +5,13 @@
 import { W, H, PAD, CELL, ROWS, COLS, CHARS, TYPES, MATE_VAL } from './constants.js';
 import { state, opp, inPalace } from './state.js';
 import { isInCheck } from './rules.js';
-import { updateFenInput } from './notation.js';
-import { syncKingPos } from './tree.js';
+import { boardToFen } from './notation.js';
+import { findKings } from './board.js';
+
+function updateFenInput() {
+  const el = document.getElementById('fen-input');
+  if (el) el.value = boardToFen(state.board);
+}
 
 // ─── SVG Board Lines ───
 function drawBoardSVG() {
@@ -124,7 +129,7 @@ function handlePaletteDrop(e) {
   e.preventDefault();
   if (state.isAnalyzing) return;
   clearHighlights();
-  state._dragDropProcessed = true;
+  dragDropProcessed = true;
   const data = JSON.parse(e.dataTransfer.getData('text/plain'));
   if (data.source === 'board') {
     removePiece(parseInt(data.fromRow), parseInt(data.fromCol));
@@ -159,20 +164,12 @@ function placePiece(row, col, type, color) {
   if (state.board[row][col]) removePiece(row, col);
   state.board[row][col] = { type, color };
   state.pieceCount++;
-  if (type === 'king') {
-    if (color === 'red') state.redKingPos = { row, col };
-    else state.blackKingPos = { row, col };
-  }
   updateStatus();
 }
 
 function removePiece(row, col) {
   const p = state.board[row][col];
   if (!p) return;
-  if (p.type === 'king') {
-    if (p.color === 'red') state.redKingPos = null;
-    else state.blackKingPos = null;
-  }
   state.board[row][col] = null;
   state.pieceCount--;
   updateStatus();
@@ -185,10 +182,6 @@ function movePiece(fr, fc, tr, tc) {
   if (state.board[tr][tc]) removePiece(tr, tc);
   state.board[tr][tc] = p;
   state.board[fr][fc] = null;
-  if (p.type === 'king') {
-    if (p.color === 'red') state.redKingPos = { row: tr, col: tc };
-    else state.blackKingPos = { row: tr, col: tc };
-  }
   updateStatus();
 }
 
@@ -220,7 +213,8 @@ export function renderPalette() {
 
 export function updateStatus() {
   document.getElementById('status').textContent = `棋子：${state.pieceCount}`;
-  document.getElementById('btn-analyze').disabled = !state.redKingPos || !state.blackKingPos || state.isAnalyzing;
+  const { red, black } = findKings(state.board);
+  document.getElementById('btn-analyze').disabled = !red || !black;
   updateFenInput();
 }
 
@@ -242,6 +236,7 @@ function highlightValidPositions(type, color) {
 }
 
 let dragBound = false;
+let dragDropProcessed = false;
 
 export function setupDragDrop() {
   if (dragBound) return;
@@ -276,7 +271,7 @@ export function setupDragDrop() {
 
 function handlePaletteDragStart(e) {
   if (state.isAnalyzing) { e.preventDefault(); return; }
-  state._dragDropProcessed = false;
+  dragDropProcessed = false;
   highlightValidPositions(this.dataset.type, this.dataset.color);
   e.dataTransfer.setData('text/plain', JSON.stringify({
     source: 'palette', type: this.dataset.type, color: this.dataset.color
@@ -286,7 +281,7 @@ function handlePaletteDragStart(e) {
 
 function handlePieceDragStart(e) {
   if (state.isAnalyzing) { e.preventDefault(); return; }
-  state._dragDropProcessed = false;
+  dragDropProcessed = false;
   highlightValidPositions(this.dataset.type, this.dataset.color);
   e.dataTransfer.setData('text/plain', JSON.stringify({
     source: 'board', type: this.dataset.type, color: this.dataset.color,
@@ -300,7 +295,7 @@ function handlePieceDragEnd(e) {
   this.classList.remove('dragging');
   clearHighlights();
   if (state.isAnalyzing) return;
-  if (!state._dragDropProcessed) {
+  if (!dragDropProcessed) {
     const fr = parseInt(this.dataset.row), fc = parseInt(this.dataset.col);
     removePiece(fr, fc);
     renderPieces();
@@ -324,7 +319,7 @@ function handleBoardDrop(e) {
   e.preventDefault();
   if (state.isAnalyzing) return;
   clearHighlights();
-  state._dragDropProcessed = true;
+  dragDropProcessed = true;
   let data;
   try { data = JSON.parse(e.dataTransfer.getData('text/plain')); } catch { return; }
   const cell = boardCellFromEvent(e);
@@ -344,18 +339,10 @@ function handleBoardDrop(e) {
 
 function restoreBoard(snapshot) {
   state.board = snapshot.map(row => row.map(cell => cell ? { type: cell.type, color: cell.color } : null));
-  state.redKingPos = null;
-  state.blackKingPos = null;
   state.pieceCount = 0;
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
-      if (state.board[r][c]) {
-        state.pieceCount++;
-        if (state.board[r][c].type === 'king') {
-          if (state.board[r][c].color === 'red') state.redKingPos = { row: r, col: c };
-          else state.blackKingPos = { row: r, col: c };
-        }
-      }
+      if (state.board[r][c]) state.pieceCount++;
     }
   }
   renderPieces();
@@ -383,10 +370,7 @@ function renderTree(node, moveNum, parentEl) {
   const prefix = node.color === 'red' ? `${moveNum}.` : `${moveNum}. ...`;
   let suffix = node.isMate ? ' 將死' : node.isStalemate ? ' 困斃' : '';
   if (!node.isMate && !node.isStalemate && node.board) {
-    const savedRK = state.redKingPos, savedBK = state.blackKingPos;
-    syncKingPos(node.board);
     if (isInCheck(node.board, opp(node.color))) suffix = ' 將軍';
-    state.redKingPos = savedRK; state.blackKingPos = savedBK;
   }
   li.textContent = `${prefix} ${node.notation}${suffix}`;
   li.addEventListener('click', () => {

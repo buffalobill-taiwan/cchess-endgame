@@ -89,13 +89,13 @@ export function boardToFen(b) {
   return rows.join('/') + ' w - - 0 1';
 }
 
-export function fenToBoard(fen) {
-  initBoard();
+export function parseFen(fen) {
   if (!fen || !fen.trim()) throw new Error('空 FEN');
   const parts = fen.trim().split(/\s+/);
   const rows = parts[0].split('/');
   if (rows.length !== ROWS) throw new Error(`棋盤應為 ${ROWS} 行，實際 ${rows.length} 行`);
-  let redKings = 0, blackKings = 0;
+  const board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  let redKings = 0, blackKings = 0, redKing = null, blackKing = null;
   for (let r = 0; r < ROWS; r++) {
     let c = 0;
     for (const ch of rows[r]) {
@@ -106,11 +106,10 @@ export function fenToBoard(fen) {
       let placed = false;
       for (const [type, code] of Object.entries(side)) {
         if (code === ch) {
-          state.board[r][c] = { type, color: isRed ? 'red' : 'black' };
-          state.pieceCount++;
+          board[r][c] = { type, color: isRed ? 'red' : 'black' };
           if (type === 'king') {
-            if (isRed) { redKings++; state.redKingPos = { row: r, col: c }; }
-            else { blackKings++; state.blackKingPos = { row: r, col: c }; }
+            if (isRed) { redKings++; redKing = { row: r, col: c }; }
+            else { blackKings++; blackKing = { row: r, col: c }; }
           }
           placed = true;
           break;
@@ -123,9 +122,17 @@ export function fenToBoard(fen) {
   }
   if (redKings > 1) throw new Error('紅方超過一個帥');
   if (blackKings > 1) throw new Error('黑方超過一個將');
+  return { board, redKing, blackKing };
 }
 
-export function updateFenInput() {
-  const el = document.getElementById('fen-input');
-  if (el) el.value = boardToFen(state.board);
+export function fenToBoard(fen) {
+  const { board } = parseFen(fen);
+  initBoard();
+  state.board = board;
+  state.pieceCount = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      if (board[r][c]) state.pieceCount++;
+    }
+  }
 }

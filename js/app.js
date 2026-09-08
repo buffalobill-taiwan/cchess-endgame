@@ -5,7 +5,7 @@
 import { MAX_DEPTH, DEFAULT_DEPTH } from './constants.js';
 import { state, initBoard } from './state.js';
 import { fenToBoard } from './notation.js';
-import { deepCopyBoard, syncKingPos } from './tree.js';
+import { deepCopyBoard } from './board.js';
 import { analyzePosition } from './analyze.js';
 import { renderBoard, renderPalette, setupDragDrop, updateStatus, renderPieces, showResult } from './ui.js';
 
@@ -17,7 +17,6 @@ function lockControls(lock) {
 
 function analyze() {
   if (state.isAnalyzing) return;
-  syncKingPos(state.board);
   state.continuousCheck = document.getElementById('chk-continuous-check').checked;
   document.getElementById('chk-continuous-check').disabled = true;
   document.querySelector('.chk-row').classList.add('disabled');
@@ -27,8 +26,8 @@ function analyze() {
   lockControls(true);
   updateStatus();
   const btn = document.getElementById('btn-analyze');
-  btn.textContent = '分析中...';
-  document.getElementById('btn-interrupt').style.display = '';
+  btn.textContent = '中斷';
+  btn.classList.add('interrupting');
   document.getElementById('result-content').innerHTML = '<p>分析中，請稍候...</p>';
 
   const initialBoard = deepCopyBoard(state.board);
@@ -53,8 +52,7 @@ function analyze() {
       document.querySelector('.chk-row').classList.remove('disabled');
       lockControls(false);
       btn.textContent = '分析';
-      document.getElementById('btn-interrupt').style.display = 'none';
-      syncKingPos(state.board);
+      btn.classList.remove('interrupting');
       updateStatus();
     }
   })();
@@ -70,9 +68,12 @@ document.addEventListener('DOMContentLoaded', () => {
   setupDragDrop();
   updateStatus();
 
-  document.getElementById('btn-analyze').addEventListener('click', analyze);
-  document.getElementById('btn-interrupt').addEventListener('click', () => {
-    state.interruptRequested = true;
+  document.getElementById('btn-analyze').addEventListener('click', () => {
+    if (state.isAnalyzing) {
+      state.interruptRequested = true;
+      return;
+    }
+    analyze();
   });
   document.getElementById('depth-slider').addEventListener('input', function() {
     document.getElementById('depth-value').textContent = this.value;

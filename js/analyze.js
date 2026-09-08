@@ -7,15 +7,16 @@ import { state, movesEqual } from './state.js';
 import { isCheckmate, isStalemate, generateLegalMoves } from './rules.js';
 import { moveToNotation } from './notation.js';
 import { searchRootAsync } from './search.js';
-import { deepCopyBoard, applyBoardCopy, withBoard, syncKingPos, generateForcedMoves, pvToTree, buildRefutationBranch } from './tree.js';
+import { findKings, deepCopyBoard, applyBoardCopy } from './board.js';
+import { generateForcedMoves, pvToTree, buildRefutationBranch } from './tree.js';
 
 export async function analyzePosition(board, opts = {}) {
   const depth = opts.depth ?? 12;
   const timeLimit = opts.timeLimit ?? ROOT_TIME_LIMIT;
   const continuousCheck = opts.continuousCheck ?? false;
 
-  syncKingPos(board);
-  if (!state.redKingPos || !state.blackKingPos) {
+  const { red, black } = findKings(board);
+  if (!red || !black) {
     return { status: 'noKing', tree: null, score: 0, interrupted: false };
   }
   if (isCheckmate(board, 'red')) {
@@ -44,10 +45,10 @@ export async function analyzePosition(board, opts = {}) {
       for (const rm of redMoves) {
         if (state.interruptRequested) break;
         const rmBoard = applyBoardCopy(boardCopy, rm);
-        const rmState = withBoard(rmBoard, () => ({
+        const rmState = {
           isMate: isCheckmate(rmBoard, 'black'),
           isStalemate: isStalemate(rmBoard, 'black'),
-        }));
+        };
         if (rmState.isMate || rmState.isStalemate) {
           tree.children.push({
             move: rm, notation: moveToNotation(boardCopy, rm, 'red'),
@@ -66,10 +67,10 @@ export async function analyzePosition(board, opts = {}) {
       }
     } else {
       const nb = applyBoardCopy(boardCopy, result.move);
-      const nbState = withBoard(nb, () => ({
+      const nbState = {
         isMate: isCheckmate(nb, 'black'),
         isStalemate: isStalemate(nb, 'black'),
-      }));
+      };
       const restPV = result.pv.slice(1);
       tree = {
         move: result.move, notation: moveToNotation(boardCopy, result.move, 'red'),
@@ -77,7 +78,6 @@ export async function analyzePosition(board, opts = {}) {
         board: deepCopyBoard(nb)
       };
 
-      syncKingPos(nb);
       const cfg = {
         refDepth: Math.max(MIN_REF_DEPTH, depth - 2),
         refDepth2: Math.max(MIN_REF_DEPTH, depth - 4),
@@ -87,10 +87,10 @@ export async function analyzePosition(board, opts = {}) {
         if (state.interruptRequested) break;
         const bmBoard = applyBoardCopy(nb, bm);
         const isPV = restPV.length > 0 && movesEqual(bm, restPV[0]);
-        const bmState = withBoard(bmBoard, () => ({
+        const bmState = {
           isMate: isCheckmate(bmBoard, 'red'),
           isStalemate: isStalemate(bmBoard, 'red'),
-        }));
+        };
         let childNode;
 
         if (isPV) {
@@ -103,10 +103,10 @@ export async function analyzePosition(board, opts = {}) {
             board: deepCopyBoard(bmBoard)
           };
           if (!childNode.isMate && !childNode.isStalemate && childNode.children.length === 0) {
-            const re = withBoard(bmBoard, () => ({
+            const re = {
               isMate: isCheckmate(bmBoard, 'red'),
               isStalemate: isStalemate(bmBoard, 'red'),
-            }));
+            };
             if (re.isMate) childNode.isMate = true;
             else if (re.isStalemate) childNode.isStalemate = true;
             else childNode.interrupted = true;

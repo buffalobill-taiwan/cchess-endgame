@@ -255,15 +255,6 @@ h1 {
   accent-color: #c0392b;
 }
 
-#btn-interrupt {
-  background: #7f8c8d;
-  color: #fff;
-}
-
-#btn-interrupt:not(:disabled):hover {
-  background: #95a5a6;
-}
-
 #status {
   color: #a08060;
   font-size: 0.8rem;
@@ -294,6 +285,14 @@ h1 {
 #btn-analyze {
   background: #c0392b;
   color: #fff;
+}
+
+#btn-analyze.interrupting {
+  background: #7f8c8d;
+}
+
+#btn-analyze.interrupting:not(:disabled):hover {
+  background: #95a5a6;
 }
 
 .chk-row {

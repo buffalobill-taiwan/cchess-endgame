@@ -3,7 +3,8 @@
 // ═══════════════════════════════════════════
 
 import { ROWS, COLS } from './constants.js';
-import { state, opp, inPalace, onOwnSide } from './state.js';
+import { opp, inPalace, onOwnSide } from './state.js';
+import { findKings } from './board.js';
 
 function isLineClear(board, fr, fc, tr, tc) {
   if (fr === tr) {
@@ -79,10 +80,11 @@ function canPieceReach(board, fr, fc, target) {
 }
 
 export function isInCheck(b, color) {
-  const kp = color === 'red' ? state.redKingPos : state.blackKingPos;
+  const { red, black } = findKings(b);
+  const kp = color === 'red' ? red : black;
   if (!kp) return true;
   const o = opp(color);
-  const okp = color === 'red' ? state.blackKingPos : state.redKingPos;
+  const okp = color === 'red' ? black : red;
 
   for (let r = 0; r < ROWS; r++) {
     for (let c = 0; c < COLS; c++) {
@@ -220,33 +222,16 @@ export function generateLegalMoves(b, color) {
   return moves;
 }
 
-// ─── make/unmake (incremental) ───
+// ─── make/unmake (incremental, pure board mutation) ───
 export function makeMove(b, move) {
   const captured = b[move.to.row][move.to.col];
   const moved = b[move.from.row][move.from.col];
   b[move.to.row][move.to.col] = moved;
   b[move.from.row][move.from.col] = null;
-
-  if (moved.type === 'king') {
-    if (moved.color === 'red') state.redKingPos = {row:move.to.row, col:move.to.col};
-    else state.blackKingPos = {row:move.to.row, col:move.to.col};
-  }
-  if (captured && captured.type === 'king') {
-    if (captured.color === 'red') state.redKingPos = null;
-    else state.blackKingPos = null;
-  }
   return { captured, moved, from:move.from, to:move.to };
 }
 
 export function unmakeMove(b, move, undo) {
   b[move.from.row][move.from.col] = undo.moved;
   b[move.to.row][move.to.col] = undo.captured;
-  if (undo.moved.type === 'king') {
-    if (undo.moved.color === 'red') state.redKingPos = {row:move.from.row, col:move.from.col};
-    else state.blackKingPos = {row:move.from.row, col:move.from.col};
-  }
-  if (undo.captured && undo.captured.type === 'king') {
-    if (undo.captured.color === 'red') state.redKingPos = {row:move.to.row, col:move.to.col};
-    else state.blackKingPos = {row:move.to.row, col:move.to.col};
-  }
 }
