@@ -8,31 +8,59 @@ import { state, initBoard } from './state.js';
 const CN = '　一二三四五六七八九';
 const AN = '　１２３４５６７８９';
 
+const DISAMBIG = {
+  2: ['前', '後'],
+  3: ['前', '中', '後'],
+  4: ['前', '二', '三', '後'],
+};
+
 function colNum(col, color) {
   return color === 'red' ? 9 - col : col + 1;
+}
+
+function sameFilePieces(b, row, col, color, type) {
+  const rows = [];
+  for (let r = 0; r < ROWS; r++) {
+    if (b[r][col] && b[r][col].color === color && b[r][col].type === type) {
+      rows.push(r);
+    }
+  }
+  // 前 = 靠近己方底線：紅方 row 小在前，黑方 row 大在前
+  rows.sort((a, b) => color === 'red' ? a - b : b - a);
+  const idx = rows.indexOf(row);
+  return { idx, total: rows.length };
 }
 
 export function moveToNotation(b, move, color) {
   const p = b[move.from.row][move.from.col];
   const ch = CHARS[color][p.type];
   const num = color === 'red' ? CN : AN;
-  const src = num[colNum(move.from.col, color)];
+  const { idx, total } = sameFilePieces(b, move.from.row, move.from.col, color, p.type);
+
+  let src;
+  if (total >= 2) {
+    const labels = DISAMBIG[Math.min(total, 4)];
+    src = labels[Math.min(idx, labels.length - 1)] + ch;
+  } else {
+    src = ch + num[colNum(move.from.col, color)];
+  }
+
   const dr = move.to.row - move.from.row;
   const adv = color === 'red' ? dr < 0 : dr > 0;
   const hor = dr === 0;
 
   if (hor) {
     const dst = num[colNum(move.to.col, color)];
-    return ch + src + '平' + dst;
+    return src + '平' + dst;
   }
 
   if (['chariot','cannon','soldier','king'].includes(p.type)) {
     const steps = Math.abs(dr);
-    return ch + src + (adv ? '進' : '退') + num[steps];
+    return src + (adv ? '進' : '退') + num[steps];
   }
 
   const dst = num[colNum(move.to.col, color)];
-  return ch + src + (adv ? '進' : '退') + dst;
+  return src + (adv ? '進' : '退') + dst;
 }
 
 // ═══════════════════════════════════════════
