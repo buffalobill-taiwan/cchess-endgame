@@ -199,8 +199,12 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx) {
   if (Date.now() - ctx.startTime > ctx.timeLimit) return { score: evaluate(b), move: null, pv: [] };
 
   const key = ttKey(b, color);
-  if (ctx.repSet.has(key)) return { score: 0, move: null, pv: [] };
+  if (ctx.repSet.has(key)) {
+    ctx.repCount++;
+    return { score: 0, move: null, pv: [] };
+  }
   ctx.repSet.add(key);
+  const repBase = ctx.repCount;
 
   try {
     const remDepth = ctx.maxDepth - depth;
@@ -271,8 +275,10 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx) {
     if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
     else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
     else flag = TT_FLAG.EXACT;
-    if (ctx.tt.size > 262144) ctx.tt.clear();
-    ctx.tt.set(key, { depth: remDepth, score: bestScore, flag, move: bestMove });
+    if (ctx.repCount === repBase) {
+      if (ctx.tt.size > 262144) ctx.tt.clear();
+      ctx.tt.set(key, { depth: remDepth, score: bestScore, flag, move: bestMove });
+    }
 
     return { score: bestScore, move: bestMove, pv: bestPV };
   } finally {
@@ -289,29 +295,40 @@ function cloneBoard(b) {
 // A mate score can be reported at the quiescence horizon, cutting the PV before
 // the final mating position. Replay the PV and carry each side's best reply
 // forward one ply at a time until the mate is actually reached (or a cap).
+// The replayed line is treated as history so the extension refuses to cycle
+// (perpetual check), and `verified` is only true when a real terminal mate is
+// reached without repeating any position.
 async function extendMatePV(board, pv, startTime, timeLimit) {
   const b = cloneBoard(board);
   let color = 'red';
+  const lineKeys = new Set([ttKey(b, color)]);
   for (const m of pv) {
     makeMove(b, m);
     color = opp(color);
+    if (lineKeys.has(ttKey(b, color))) return { extended: pv, verified: false };
+    lineKeys.add(ttKey(b, color));
   }
   const extended = pv.slice();
   for (let i = 0; i < 40; i++) {
     if (Date.now() - startTime > timeLimit) break;
-    if (generateLegalMoves(b, color).length === 0) break;
+    if (generateLegalMoves(b, color).length === 0) return { extended, verified: true };
+    const seed = new Set(lineKeys);
+    seed.delete(ttKey(b, color));
     const ctx = {
       startTime, timeLimit, maxDepth: 4,
-      repSet: new Set(), tt: new Map(), killers: [],
+      repSet: seed, tt: new Map(), killers: [], repCount: 0,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, color, 0, -INF, INF, ctx);
     if (!r.move) break;
-    extended.push(r.move);
     makeMove(b, r.move);
     color = opp(color);
+    if (lineKeys.has(ttKey(b, color))) break;
+    lineKeys.add(ttKey(b, color));
+    extended.push(r.move);
   }
-  return extended;
+  if (generateLegalMoves(b, color).length === 0) return { extended, verified: true };
+  return { extended, verified: false };
 }
 
 export async function searchRootAsync(b, maxDepth, timeLimit) {
@@ -323,16 +340,21 @@ export async function searchRootAsync(b, maxDepth, timeLimit) {
     if (state.interruptRequested) break;
     const ctx = {
       startTime, timeLimit, maxDepth: d,
-      repSet: new Set(), tt, killers,
+      repSet: new Set(), tt, killers, repCount: 0,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx);
-    if (Date.now() - startTime >= timeLimit) break;
     best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) {
-      best.pv = await extendMatePV(b, r.pv, startTime, timeLimit);
+      const { extended, verified } = await extendMatePV(b, r.pv, startTime, timeLimit);
+      if (!verified) {
+        best = { score: 0, move: r.move, pv: [] };
+        continue;
+      }
+      best.pv = extended;
       break;
     }
+    if (Date.now() - startTime >= timeLimit) break;
   }
   return best;
 }
@@ -345,15 +367,17 @@ export async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
     if (state.interruptRequested || Date.now() - startTime > timeLimit) break;
     const ctx = {
       startTime, timeLimit, maxDepth: d,
-      repSet: new Set(), tt, killers,
+      repSet: new Set(), tt, killers, repCount: 0,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, color, 0, -INF, INF, ctx);
-    if (r.move) best = r;
     if (Math.abs(r.score) > MATE_VAL / 2) {
-      if (!best.move) best = r;
+      const { extended, verified } = await extendMatePV(b, r.pv, startTime, timeLimit);
+      if (!verified) continue;
+      best = { score: r.score, move: r.move, pv: extended };
       break;
     }
+    if (r.move) best = r;
   }
   return best;
 }
