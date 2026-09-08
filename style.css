@@ -434,10 +434,11 @@ h1 {
   border: 1px solid #5c3a1e;
   border-radius: 8px;
   padding: 20px;
-  min-width: 420px;
-  max-width: 520px;
-  max-height: 80vh;
-  overflow-y: auto;
+  width: 520px;
+  max-width: calc(100vw - 32px);
+  height: min(480px, 80vh);
+  display: flex;
+  flex-direction: column;
   color: #e8d5b0;
 }
 
@@ -445,6 +446,47 @@ h1 {
   margin: 0 0 16px;
   font-size: 1.1rem;
   letter-spacing: 0.1em;
+}
+
+.modal-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid #3c2820;
+}
+
+.modal-tab {
+  flex: 1;
+  background: transparent;
+  color: #a08060;
+  border: none;
+  border-bottom: 2px solid transparent;
+  padding: 8px 0;
+  font-size: 0.9rem;
+  cursor: pointer;
+  font-family: inherit;
+  letter-spacing: 0.1em;
+}
+
+.modal-tab:hover {
+  color: #e8d5b0;
+}
+
+.modal-tab.active {
+  color: #e8d5b0;
+  border-bottom-color: #e8d5b0;
+}
+
+.example-tip {
+  margin-top: 12px;
+  font-size: 0.75rem;
+  color: #6a5040;
+}
+
+.example-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
 }
 
 .example-item {
@@ -461,7 +503,10 @@ h1 {
 
 .example-label {
   font-size: 0.85rem;
-  min-width: 60px;
+  width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .example-fen {

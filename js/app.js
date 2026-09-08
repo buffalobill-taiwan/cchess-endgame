@@ -219,27 +219,27 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   const DEFAULT_EXAMPLES = [
-    { label: '範例1', fen: '3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1 w - - 0 1' },
-    { label: '範例2', fen: '1rbak3r/1N1Ra4/cR2b1N2/9/9/9/9/9/5p3/4K4 w - - 0 1' },
-    { label: '範例3', fen: '2bk3cc/r3aR3/n1r1b4/9/9/6R2/9/3n5/4p4/1C3K3 w - - 0 1' },
-    { label: '範例4', fen: '4k2P1/5P3/c8/9/9/3c4R/4r3C/B3p4/4p4/3K5 w - - 0 1' },
-    { label: '範例5', fen: '3a1aC2/2PcPn3/2nkb3R/7C1/6b2/9/9/9/5p3/2rAK1p2 w - - 0 1' },
-    { label: '範例6', fen: '9/9/3a1k3/6P2/9/9/3r5/2n3r2/C8/4K1p2 w - - 0 1' },
-    { label: '範例7', fen: '3rka1R1/4aR3/4b4/9/9/9/6r2/7C1/3p5/c1BA1K3 w - - 0 1' },
-    { label: '範例8', fen: '9/4a4/3a1k3/2r3R2/1n5N1/c7C/1n5N1/2r3R2/3p1p3/4K4 w - - 0 1' },
+    { label: '馬炮兵圍城', fen: '3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1 w - - 0 1' },
+    { label: '雙炮馬連環', fen: '1rbak3r/1N1Ra4/cR2b1N2/9/9/9/9/9/5p3/4K4 w - - 0 1' },
+    { label: '雙俥夾車攻', fen: '2bk3cc/r3aR3/n1r1b4/9/9/6R2/9/3n5/4p4/1C3K3 w - - 0 1' },
+    { label: '俥炮兵破關', fen: '4k2P1/5P3/c8/9/9/3c4R/4r3C/B3p4/4p4/3K5 w - - 0 1' },
+    { label: '鐵桶炮馬局', fen: '3a1aC2/2PcPn3/2nkb3R/7C1/6b2/9/9/9/5p3/2rAK1p2 w - - 0 1' },
+    { label: '單兵炮斃雙車', fen: '9/9/3a1k3/6P2/9/9/3r5/2n3r2/C8/4K1p2 w - - 0 1' },
+    { label: '雙俥炮夾擊', fen: '3rka1R1/4aR3/4b4/9/9/9/6r2/7C1/3p5/c1BA1K3 w - - 0 1' },
+    { label: '對攻炮馬爭先', fen: '9/4a4/3a1k3/2r3R2/1n5N1/c7C/1n5N1/2r3R2/3p1p3/4K4 w - - 0 1' },
+    { label: '霹靂眼', fen: '3aR4/3ca4/b3k4/5P3/C1b2R3/9/4P3r/3AB4/3p1pr2/2N1K4 w - - 0 1' },
   ];
 
-  function loadExamples() {
-    const raw = localStorage.getItem('examples');
-    if (!raw) {
-      saveExamples(DEFAULT_EXAMPLES);
-      return DEFAULT_EXAMPLES.slice();
-    }
-    try { return JSON.parse(raw); } catch { return DEFAULT_EXAMPLES.slice(); }
+  const MY_EXAMPLES_KEY = 'myExamples';
+
+  function loadMyExamples() {
+    const raw = localStorage.getItem(MY_EXAMPLES_KEY);
+    if (!raw) return [];
+    try { return JSON.parse(raw); } catch { return []; }
   }
 
-  function saveExamples(arr) {
-    localStorage.setItem('examples', JSON.stringify(arr));
+  function saveMyExamples(arr) {
+    localStorage.setItem(MY_EXAMPLES_KEY, JSON.stringify(arr));
   }
 
   function showExamplesModal() {
@@ -258,10 +258,67 @@ document.addEventListener('DOMContentLoaded', () => {
     const title = document.createElement('h2');
     title.textContent = '範例局面';
 
+    function loadExample(fen) {
+      if (state.isAnalyzing) return;
+      try {
+        fenToBoard(fen);
+        renderPieces();
+        updateStatus();
+        document.getElementById('result-content').innerHTML = '';
+        overlay.remove();
+      } catch (e) {
+        alert('FEN格式錯誤：' + e.message);
+      }
+    }
+
+    const tabs = document.createElement('div');
+    tabs.className = 'modal-tabs';
+
+    const tabSystem = document.createElement('button');
+    tabSystem.className = 'modal-tab active';
+    tabSystem.textContent = '系統精選';
+
+    const tabMine = document.createElement('button');
+    tabMine.className = 'modal-tab';
+    tabMine.textContent = '我的範例';
+
     const list = document.createElement('div');
-    function renderList() {
+    list.className = 'example-list';
+
+    function renderSystemList() {
       list.innerHTML = '';
-      const items = loadExamples();
+      for (const item of DEFAULT_EXAMPLES) {
+        const row = document.createElement('div');
+        row.className = 'example-item';
+
+        const label = document.createElement('span');
+        label.className = 'example-label';
+        label.textContent = item.label;
+
+        const fen = document.createElement('span');
+        fen.className = 'example-fen';
+        fen.textContent = item.fen;
+
+        const loadBtn = document.createElement('button');
+        loadBtn.className = 'example-load';
+        loadBtn.textContent = '載入';
+        loadBtn.addEventListener('click', () => loadExample(item.fen));
+
+        row.appendChild(label);
+        row.appendChild(fen);
+        row.appendChild(loadBtn);
+        list.appendChild(row);
+      }
+
+      const tip = document.createElement('div');
+      tip.className = 'example-tip';
+      tip.textContent = '系統精選為內建範例，隨版本更新，不可刪除。';
+      list.appendChild(tip);
+    }
+
+    function renderMyList() {
+      list.innerHTML = '';
+      const items = loadMyExamples();
       for (let i = 0; i < items.length; i++) {
         const row = document.createElement('div');
         row.className = 'example-item';
@@ -277,28 +334,17 @@ document.addEventListener('DOMContentLoaded', () => {
         const loadBtn = document.createElement('button');
         loadBtn.className = 'example-load';
         loadBtn.textContent = '載入';
-        loadBtn.addEventListener('click', () => {
-          if (state.isAnalyzing) return;
-          try {
-            fenToBoard(items[i].fen);
-            renderPieces();
-            updateStatus();
-            document.getElementById('result-content').innerHTML = '';
-            overlay.remove();
-          } catch (e) {
-            alert('FEN格式錯誤：' + e.message);
-          }
-        });
+        loadBtn.addEventListener('click', () => loadExample(items[i].fen));
 
         const delBtn = document.createElement('button');
         delBtn.className = 'example-del';
         delBtn.textContent = '刪除';
         delBtn.addEventListener('click', () => {
           if (state.isAnalyzing) return;
-          const cur = loadExamples();
+          const cur = loadMyExamples();
           cur.splice(i, 1);
-          saveExamples(cur);
-          renderList();
+          saveMyExamples(cur);
+          renderMyList();
         });
 
         row.appendChild(label);
@@ -306,6 +352,13 @@ document.addEventListener('DOMContentLoaded', () => {
         row.appendChild(loadBtn);
         row.appendChild(delBtn);
         list.appendChild(row);
+      }
+
+      if (items.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'example-tip';
+        empty.textContent = '尚無自訂範例，請於下方新增。';
+        list.appendChild(empty);
       }
 
       const addRow = document.createElement('div');
@@ -332,10 +385,10 @@ document.addEventListener('DOMContentLoaded', () => {
           alert('FEN格式錯誤：' + e.message);
           return;
         }
-        const cur = loadExamples();
+        const cur = loadMyExamples();
         cur.push({ label: l, fen: f });
-        saveExamples(cur);
-        renderList();
+        saveMyExamples(cur);
+        renderMyList();
       });
 
       addRow.appendChild(labelInput);
@@ -343,10 +396,26 @@ document.addEventListener('DOMContentLoaded', () => {
       addRow.appendChild(addBtn);
       list.appendChild(addRow);
     }
-    renderList();
+
+    tabSystem.addEventListener('click', () => {
+      tabSystem.classList.add('active');
+      tabMine.classList.remove('active');
+      renderSystemList();
+    });
+    tabMine.addEventListener('click', () => {
+      tabMine.classList.add('active');
+      tabSystem.classList.remove('active');
+      renderMyList();
+    });
+
+    tabs.appendChild(tabSystem);
+    tabs.appendChild(tabMine);
+
+    renderSystemList();
 
     modal.appendChild(closeBtn);
     modal.appendChild(title);
+    modal.appendChild(tabs);
     modal.appendChild(list);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
