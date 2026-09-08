@@ -439,6 +439,7 @@ h1 {
   height: min(480px, 80vh);
   display: flex;
   flex-direction: column;
+  position: relative;
   color: #e8d5b0;
 }
 
@@ -483,10 +484,46 @@ h1 {
   color: #6a5040;
 }
 
+.example-footer {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #3c2820;
+  font-size: 0.75rem;
+  color: #6a5040;
+}
+
 .example-list {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+}
+
+#result::-webkit-scrollbar,
+.example-list::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+#result::-webkit-scrollbar-track,
+.example-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+#result::-webkit-scrollbar-thumb,
+.example-list::-webkit-scrollbar-thumb {
+  background: #5c3a1e;
+  border-radius: 4px;
+}
+
+#result::-webkit-scrollbar-thumb:hover,
+.example-list::-webkit-scrollbar-thumb:hover {
+  background: #7a4e2a;
+}
+
+#result,
+.example-list {
+  scrollbar-width: thin;
+  scrollbar-color: #5c3a1e transparent;
 }
 
 .example-item {
@@ -554,6 +591,8 @@ h1 {
   display: flex;
   gap: 6px;
   margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #3c2820;
   align-items: center;
 }
 
@@ -593,7 +632,9 @@ h1 {
 }
 
 .modal-close {
-  float: right;
+  position: absolute;
+  top: 8px;
+  right: 12px;
   background: transparent;
   color: #a08060;
   border: none;

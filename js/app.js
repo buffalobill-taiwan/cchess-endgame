@@ -309,11 +309,6 @@ document.addEventListener('DOMContentLoaded', () => {
         row.appendChild(loadBtn);
         list.appendChild(row);
       }
-
-      const tip = document.createElement('div');
-      tip.className = 'example-tip';
-      tip.textContent = '系統精選為內建範例，隨版本更新，不可刪除。';
-      list.appendChild(tip);
     }
 
     function renderMyList() {
@@ -360,63 +355,78 @@ document.addEventListener('DOMContentLoaded', () => {
         empty.textContent = '尚無自訂範例，請於下方新增。';
         list.appendChild(empty);
       }
-
-      const addRow = document.createElement('div');
-      addRow.className = 'example-add';
-
-      const labelInput = document.createElement('input');
-      labelInput.className = 'example-add-name';
-      labelInput.placeholder = '名稱';
-      const fenInput = document.createElement('input');
-      fenInput.placeholder = 'FEN 編碼';
-      fenInput.style.flex = '3';
-
-      const addBtn = document.createElement('button');
-      addBtn.className = 'example-add-btn';
-      addBtn.textContent = '新增';
-      addBtn.addEventListener('click', () => {
-        if (state.isAnalyzing) return;
-        const l = labelInput.value.trim();
-        const f = fenInput.value.trim();
-        if (!l || !f) { alert('請輸入名稱與 FEN'); return; }
-        try {
-          fenToBoard(f);
-        } catch (e) {
-          alert('FEN格式錯誤：' + e.message);
-          return;
-        }
-        const cur = loadMyExamples();
-        cur.push({ label: l, fen: f });
-        saveMyExamples(cur);
-        renderMyList();
-      });
-
-      addRow.appendChild(labelInput);
-      addRow.appendChild(fenInput);
-      addRow.appendChild(addBtn);
-      list.appendChild(addRow);
     }
 
-    tabSystem.addEventListener('click', () => {
+    const footer = document.createElement('div');
+    footer.className = 'example-footer';
+    footer.textContent = '系統精選為內建範例，隨版本更新，不可刪除。';
+
+    const addRow = document.createElement('div');
+    addRow.className = 'example-add';
+    addRow.style.display = 'none';
+
+    const labelInput = document.createElement('input');
+    labelInput.className = 'example-add-name';
+    labelInput.placeholder = '名稱';
+    const fenInput = document.createElement('input');
+    fenInput.placeholder = 'FEN 編碼';
+    fenInput.style.flex = '3';
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'example-add-btn';
+    addBtn.textContent = '新增';
+    addBtn.addEventListener('click', () => {
+      if (state.isAnalyzing) return;
+      const l = labelInput.value.trim();
+      const f = fenInput.value.trim();
+      if (!l || !f) { alert('請輸入名稱與 FEN'); return; }
+      try {
+        fenToBoard(f);
+      } catch (e) {
+        alert('FEN格式錯誤：' + e.message);
+        return;
+      }
+      const cur = loadMyExamples();
+      cur.push({ label: l, fen: f });
+      saveMyExamples(cur);
+      labelInput.value = '';
+      fenInput.value = '';
+      renderMyList();
+    });
+
+    addRow.appendChild(labelInput);
+    addRow.appendChild(fenInput);
+    addRow.appendChild(addBtn);
+
+    function setSystemTab() {
       tabSystem.classList.add('active');
       tabMine.classList.remove('active');
       renderSystemList();
-    });
-    tabMine.addEventListener('click', () => {
+      footer.style.display = '';
+      addRow.style.display = 'none';
+    }
+    function setMyTab() {
       tabMine.classList.add('active');
       tabSystem.classList.remove('active');
       renderMyList();
-    });
+      footer.style.display = 'none';
+      addRow.style.display = '';
+    }
+
+    tabSystem.addEventListener('click', setSystemTab);
+    tabMine.addEventListener('click', setMyTab);
 
     tabs.appendChild(tabSystem);
     tabs.appendChild(tabMine);
 
-    renderSystemList();
+    setSystemTab();
 
     modal.appendChild(closeBtn);
     modal.appendChild(title);
     modal.appendChild(tabs);
     modal.appendChild(list);
+    modal.appendChild(footer);
+    modal.appendChild(addRow);
     overlay.appendChild(modal);
     document.body.appendChild(overlay);
   }
