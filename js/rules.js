@@ -80,17 +80,34 @@ function canPieceReach(board, fr, fc, target) {
   return false;
 }
 
-export function isInCheck(b, color) {
-  const { red, black } = findKings(b);
-  const kp = color === 'red' ? red : black;
+// Detect check on `color`'s king. Optional fast-path arguments avoid the
+// full-board scans the caller already did:
+//   kp        — color's king cell (falls back to findKings when null/missing)
+//   okp       — opponent king cell (null when opponent king is absent, e.g. captured)
+//   enemyList — opponent's piece entries (from pieceInfo); when provided, only
+//               these ≤16 pieces are scanned for attackers (skipSq skips the
+//               one just captured at m.to)
+export function isInCheck(b, color, kp, okp, enemyList, skipSq) {
+  if (!kp || !okp) {
+    const { red, black } = findKings(b);
+    if (!kp) kp = color === 'red' ? red : black;
+    if (!okp) okp = color === 'red' ? black : red;
+  }
   if (!kp) return true;
   const o = opp(color);
-  const okp = color === 'red' ? black : red;
 
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (b[r][c] && b[r][c].color === o) {
-        if (canPieceReach(b, r, c, {row:kp.row, col:kp.col})) return true;
+  if (enemyList) {
+    for (let i = 0; i < enemyList.length; i++) {
+      const e = enemyList[i];
+      if (skipSq && e.row === skipSq.row && e.col === skipSq.col) continue;
+      if (canPieceReach(b, e.row, e.col, kp)) return true;
+    }
+  } else {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (b[r][c] && b[r][c].color === o) {
+          if (canPieceReach(b, r, c, kp)) return true;
+        }
       }
     }
   }
@@ -206,21 +223,52 @@ function generatePseudoMoves(b, row, col) {
   return moves;
 }
 
-export function generateLegalMoves(b, color) {
+// Legality test for a pseudo-legal move `m` (already applied via makeMove;
+// `undo` is its undo record). With `info` (the caller's pieceInfo for the
+// pre-move board) the single-scan check path is used: the moved king's cell is
+// passed explicitly, a captured opponent king nulls okp, and the captured pawn
+// cell is skipped in the attacker scan.
+function ownMoveLegal(b, m, undo, info, color) {
+  if (!info) return !isInCheck(b, color);
+  let tkp = info[color];
+  if (undo.moved.type === 'king') tkp = { row: m.to.row, col: m.to.col };
+  const okp = (undo.captured && undo.captured.type === 'king') ? null : info[opp(color)];
+  const skipSq = undo.captured ? m.to : null;
+  return !isInCheck(b, color, tkp, okp, info[opp(color) + 'Pieces'], skipSq);
+}
+
+function generateMovesInternal(b, color, info, onlyCaptures) {
   const moves = [];
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (b[r][c] && b[r][c].color === color) {
-        const pm = generatePseudoMoves(b, r, c);
-        for (const m of pm) {
-          const undo = makeMove(b, m);
-          if (!isInCheck(b, color)) moves.push(m);
-          unmakeMove(b, m, undo);
-        }
+  const list = info ? info[color + 'Pieces'] : null;
+  const collect = (r, c) => {
+    const pm = generatePseudoMoves(b, r, c);
+    for (const m of pm) {
+      if (onlyCaptures && !m.captured) continue;
+      const undo = makeMove(b, m);
+      if (ownMoveLegal(b, m, undo, info, color)) moves.push(m);
+      unmakeMove(b, m, undo);
+    }
+  };
+  if (list) {
+    for (const src of list) collect(src.row, src.col);
+  } else {
+    for (let r = 0; r < ROWS; r++) {
+      for (let c = 0; c < COLS; c++) {
+        if (b[r][c] && b[r][c].color === color) collect(r, c);
       }
     }
   }
   return moves;
+}
+
+export function generateLegalMoves(b, color, info) {
+  return generateMovesInternal(b, color, info, false);
+}
+
+// Captures only — the quiescence search generator. Same legality filtering as
+// generateLegalMoves but skips quiet moves up front.
+export function generateCaptureMoves(b, color, info) {
+  return generateMovesInternal(b, color, info, true);
 }
 
 // ─── make/unmake (incremental, pure board mutation) ───

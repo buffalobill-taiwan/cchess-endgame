@@ -28,3 +28,28 @@ export function findKings(b) {
   }
   return { red, black };
 }
+
+// Per-node piece lists for fast move generation and check detection.
+// Returns { red, black, redPieces, blackPieces } where `red`/`black` are the
+// king entries (or null) and each list holds { row, col, type } entries.
+// King entries are shared objects with their list entry, so relocating a king
+// in the list also moves the position reference.
+export function pieceInfo(b) {
+  let red = null, black = null;
+  const redPieces = [], blackPieces = [];
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const p = b[r][c];
+      if (!p) continue;
+      const entry = { row: r, col: c, type: p.type };
+      if (p.color === 'red') {
+        if (p.type === 'king') red = entry;
+        redPieces.push(entry);
+      } else {
+        if (p.type === 'king') black = entry;
+        blackPieces.push(entry);
+      }
+    }
+  }
+  return { red, black, redPieces, blackPieces };
+}

@@ -4,8 +4,11 @@
 
 import { ROWS, COLS, PIECE_VALUES, MATE_VAL, INF, TT_SIZE, TT_MASK } from './constants.js';
 import { state, opp, movesEqual } from './state.js';
-import { isInCheck, generateLegalMoves, makeMove, unmakeMove } from './rules.js';
+import { isInCheck, generateLegalMoves, generateCaptureMoves, makeMove, unmakeMove } from './rules.js';
 import { zobristFromBoard } from './zobrist.js';
+import { pieceInfo } from './board.js';
+
+const ORDER_SCRATCH_LEN = 1024;
 
 // ─── Static evaluation (material + small positional terms) ───
 
@@ -99,10 +102,21 @@ function moveScore(b, m, ttMove, killers, ply) {
   return s;
 }
 
-function orderMoves(moves, b, ttMove, killers, ply) {
-  const scored = moves.map(m => ({ m, s: moveScore(b, m, ttMove, killers, ply) }));
-  scored.sort((a, c) => c.s - a.s);
-  for (let i = 0; i < moves.length; i++) moves[i] = scored[i].m;
+// Selection sort in place over `moves`, scoring into ctx.orderScratch — no
+// per-move object allocations.
+function orderMoves(ctx, moves, b, ttMove, killers, ply) {
+  const n = moves.length;
+  if (n <= 1) return;
+  const scr = ctx.orderScratch;
+  for (let i = 0; i < n; i++) scr[i] = moveScore(b, moves[i], ttMove, killers, ply);
+  for (let i = 0; i < n - 1; i++) {
+    let best = i;
+    for (let j = i + 1; j < n; j++) if (scr[j] > scr[best]) best = j;
+    if (best !== i) {
+      const t = moves[i]; moves[i] = moves[best]; moves[best] = t;
+      const ts = scr[i]; scr[i] = scr[best]; scr[best] = ts;
+    }
+  }
 }
 
 // ─── Zobrist + transposition table ───
@@ -114,13 +128,46 @@ function repKey(h) {
   return ((BigInt(h.lo) & 0xFFFFFFFFn) << 32n) | (BigInt(h.hi) & 0xFFFFFFFFn);
 }
 
-// ─── Quiescence search (captures + check evasions at the horizon) ───
-
-function generateCaptureMoves(b, color) {
-  return generateLegalMoves(b, color).filter(m => b[m.to.row][m.to.col]);
+// Depth-preferred write: never evict a deeper entry. Same-key entries at equal
+// or shallower depth are overwritten, and hash collisions replace only when
+// the incoming search is at least as deep as the stored one.
+function storeTT(ctx, idx, hash, depth, score, flag, move) {
+  const prev = ctx.tt[idx];
+  if (prev && prev.depth > depth) return;
+  ctx.tt[idx] = { hashLo: hash.lo, hashHi: hash.hi, depth, score, flag, move };
 }
 
-function quiesce(b, color, alpha, beta, ctx, ply, hash) {
+// ─── Quiescence search (captures + check evasions at the horizon) ───
+
+// Did `color`'s just-made move `m` deliver check to the opponent? Runs AFTER
+// makeMove (undo is its undo record) so the moved piece sits on the board; its
+// pieceInfo list entry is temporarily relocated so the single-scan attacker
+// detection sees it at the new square.
+function givesCheck(b, m, undo, color, info) {
+  const enemy = opp(color);
+  const list = info[color + 'Pieces'];
+  let relocated = null;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].row === m.from.row && list[i].col === m.from.col) {
+      relocated = list[i];
+      relocated.row = m.to.row; relocated.col = m.to.col;
+      break;
+    }
+  }
+  let check;
+  if (undo.captured && undo.captured.type === 'king') {
+    check = true;
+  } else {
+    const kp = info[enemy];
+    const okp = undo.moved.type === 'king' ? { row: m.to.row, col: m.to.col } : info[color];
+    check = isInCheck(b, enemy, kp, okp, list, null);
+  }
+  if (relocated) { relocated.row = m.from.row; relocated.col = m.from.col; }
+  return check;
+}
+
+function quiesce(b, color, alpha, beta, ctx, ply, hash, info) {
+  ctx.nodes++;
   if (state.interruptRequested) return evaluate(b);
   if (Date.now() - ctx.startTime > ctx.timeLimit) return evaluate(b);
   if (ply > 64) return evaluate(b);
@@ -134,18 +181,19 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash) {
     if (ttEntry.flag === TT_FLAG.UPPER && ttEntry.score <= alpha) return ttEntry.score;
   }
 
-  const inCheck = isInCheck(b, color);
+  if (!info) info = pieceInfo(b);
+  const inCheck = isInCheck(b, color, info[color], info[opp(color)], info[opp(color) + 'Pieces'], null);
   const standPat = evaluate(b);
 
   if (inCheck) {
-    let moves = generateLegalMoves(b, color);
+    let moves = generateLegalMoves(b, color, info);
     if (moves.length === 0) {
       const s = (color === 'red' ? -1 : 1) * (MATE_VAL - ctx.maxDepth - ply);
-      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: 0, score: s, flag: TT_FLAG.EXACT, move: null };
+      storeTT(ctx, ttIdx, hash, 0, s, TT_FLAG.EXACT, null);
       return s;
     }
     const alpha0 = alpha, beta0 = beta;
-    orderMoves(moves, b, ttHit ? ttEntry.move : null, ctx.killers, ply);
+    orderMoves(ctx, moves, b, ttHit ? ttEntry.move : null, ctx.killers, ply);
     let bestScore = color === 'red' ? -INF : INF;
     for (const m of moves) {
       if (state.interruptRequested) break;
@@ -166,7 +214,7 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash) {
       if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
       else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
       else flag = TT_FLAG.EXACT;
-      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: 0, score: bestScore, flag, move: null };
+      storeTT(ctx, ttIdx, hash, 0, bestScore, flag, null);
     }
     return bestScore;
   }
@@ -179,8 +227,8 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash) {
     if (standPat < beta) beta = standPat;
   }
 
-  const caps = generateCaptureMoves(b, color);
-  orderMoves(caps, b, null, [], 0);
+  const caps = generateCaptureMoves(b, color, info);
+  orderMoves(ctx, caps, b, null, [], 0);
   const alpha0 = alpha, beta0 = beta;
   for (const m of caps) {
     if (state.interruptRequested) break;
@@ -205,7 +253,7 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash) {
     if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
     else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
     else flag = TT_FLAG.EXACT;
-    ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: 0, score: bestScore, flag, move: null };
+    storeTT(ctx, ttIdx, hash, 0, bestScore, flag, null);
   }
   return bestScore;
 }
@@ -213,6 +261,7 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash) {
 // ─── Alpha-beta with TT and repetition detection ───
 
 async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
+  ctx.nodes++;
   if (state.interruptRequested) return { score: evaluate(b), move: null, pv: [] };
   if (Date.now() - ctx.startTime > ctx.timeLimit) return { score: evaluate(b), move: null, pv: [] };
 
@@ -227,7 +276,8 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
   try {
     const remDepth = ctx.maxDepth - depth;
     if (remDepth <= 0) {
-      return { score: quiesce(b, color, alpha, beta, ctx, 0, hash), move: null, pv: [] };
+      const info = pieceInfo(b);
+      return { score: quiesce(b, color, alpha, beta, ctx, 0, hash, info), move: null, pv: [] };
     }
 
     const ttIdx = hash.lo & TT_MASK;
@@ -240,22 +290,23 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
     }
     const ttMove = ttHit ? ttEntry.move : null;
 
-    let moves = generateLegalMoves(b, color);
+    const info = pieceInfo(b);
+    let moves = generateLegalMoves(b, color, info);
     if (state.continuousCheck && color === 'red') {
       moves = moves.filter(m => {
         const undo = makeMove(b, m);
-        const givesCheck = isInCheck(b, opp(color));
+        const check = givesCheck(b, m, undo, 'red', info);
         unmakeMove(b, m, undo);
-        return givesCheck;
+        return check;
       });
     }
     if (moves.length === 0) {
       const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
-      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: remDepth, score: s, flag: TT_FLAG.EXACT, move: null };
+      storeTT(ctx, ttIdx, hash, remDepth, s, TT_FLAG.EXACT, null);
       return { score: s, move: null, pv: [] };
     }
 
-    orderMoves(moves, b, ttMove, ctx.killers, depth);
+    orderMoves(ctx, moves, b, ttMove, ctx.killers, depth);
 
     let bestMove = null, bestPV = [];
     let bestScore = color === 'red' ? -INF : INF;
@@ -296,7 +347,7 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
     else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
     else flag = TT_FLAG.EXACT;
     if (ctx.repCount === repBase) {
-      ctx.tt[ttIdx] = { hashLo: hash.lo, hashHi: hash.hi, depth: remDepth, score: bestScore, flag, move: bestMove };
+      storeTT(ctx, ttIdx, hash, remDepth, bestScore, flag, bestMove);
     }
 
     return { score: bestScore, move: bestMove, pv: bestPV };
@@ -316,38 +367,41 @@ function cloneBoard(b) {
 // forward one ply at a time until the mate is actually reached (or a cap).
 // The replayed line is treated as history so the extension refuses to cycle
 // (perpetual check), and `verified` is only true when a real terminal mate is
-// reached without repeating any position.
-async function extendMatePV(board, pv, startTime, timeLimit) {
+// reached without repeating any position. `color` is the side to move on `board`.
+async function extendMatePV(board, pv, color, startTime, timeLimit) {
   const b = cloneBoard(board);
-  let color = 'red';
-  const h = zobristFromBoard(b, color, state.continuousCheck);
+  let side = color;
+  const h = zobristFromBoard(b, side, state.continuousCheck);
+  const tt = new Array(TT_SIZE);
+  const orderScratch = new Int32Array(ORDER_SCRATCH_LEN);
   const lineKeys = new Set([repKey(h)]);
   for (const m of pv) {
     makeMove(b, m, h);
-    color = opp(color);
+    side = opp(side);
     if (lineKeys.has(repKey(h))) return { extended: pv, verified: false };
     lineKeys.add(repKey(h));
   }
   const extended = pv.slice();
   for (let i = 0; i < 40; i++) {
     if (Date.now() - startTime > timeLimit) break;
-    if (generateLegalMoves(b, color).length === 0) return { extended, verified: true };
+    if (generateLegalMoves(b, side).length === 0) return { extended, verified: true };
     const seed = new Set(lineKeys);
     seed.delete(repKey(h));
     const ctx = {
       startTime, timeLimit, maxDepth: 4,
-      repSet: seed, tt: new Array(TT_SIZE), killers: [], repCount: 0,
+      repSet: seed, tt, killers: [], repCount: 0, nodes: 0,
+      orderScratch,
       yieldState: { lastYield: Date.now() },
     };
-    const r = await alphaBeta(b, color, 0, -INF, INF, ctx, h);
+    const r = await alphaBeta(b, side, 0, -INF, INF, ctx, h);
     if (!r.move) break;
     makeMove(b, r.move, h);
-    color = opp(color);
+    side = opp(side);
     if (lineKeys.has(repKey(h))) break;
     lineKeys.add(repKey(h));
     extended.push(r.move);
   }
-  if (generateLegalMoves(b, color).length === 0) return { extended, verified: true };
+  if (generateLegalMoves(b, side).length === 0) return { extended, verified: true };
   return { extended, verified: false };
 }
 
@@ -356,20 +410,24 @@ export async function searchRootAsync(b, maxDepth, timeLimit) {
   let best = { score: 0, move: null, pv: [] };
   const tt = new Array(TT_SIZE);
   const killers = [];
+  const orderScratch = new Int32Array(ORDER_SCRATCH_LEN);
+  let totalNodes = 0;
   const rootHash = zobristFromBoard(b, 'red', state.continuousCheck);
   for (let d = 1; d <= maxDepth; d++) {
     if (state.interruptRequested) break;
     const ctx = {
       startTime, timeLimit, maxDepth: d,
-      repSet: new Set(), tt, killers, repCount: 0,
+      repSet: new Set(), tt, killers, repCount: 0, nodes: 0,
+      orderScratch,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx, rootHash);
-    best = r;
+    totalNodes += ctx.nodes;
+    best = { score: r.score, move: r.move, pv: r.pv, nodes: totalNodes };
     if (Math.abs(r.score) > MATE_VAL / 2) {
-      const { extended, verified } = await extendMatePV(b, r.pv, startTime, timeLimit);
+      const { extended, verified } = await extendMatePV(b, r.pv, 'red', startTime, timeLimit);
       if (!verified) {
-        best = { score: 0, move: r.move, pv: [] };
+        best = { score: 0, move: r.move, pv: [], nodes: totalNodes };
         continue;
       }
       best.pv = extended;
@@ -384,22 +442,26 @@ export async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
   let best = { score: 0, move: null, pv: [] };
   const tt = new Array(TT_SIZE);
   const killers = [];
+  const orderScratch = new Int32Array(ORDER_SCRATCH_LEN);
+  let totalNodes = 0;
   const rootHash = zobristFromBoard(b, color, state.continuousCheck);
   for (let d = 2; d <= maxDepth; d += 2) {
     if (state.interruptRequested || Date.now() - startTime > timeLimit) break;
     const ctx = {
       startTime, timeLimit, maxDepth: d,
-      repSet: new Set(), tt, killers, repCount: 0,
+      repSet: new Set(), tt, killers, repCount: 0, nodes: 0,
+      orderScratch,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, color, 0, -INF, INF, ctx, rootHash);
+    totalNodes += ctx.nodes;
     if (Math.abs(r.score) > MATE_VAL / 2) {
-      const { extended, verified } = await extendMatePV(b, r.pv, startTime, timeLimit);
+      const { extended, verified } = await extendMatePV(b, r.pv, color, startTime, timeLimit);
       if (!verified) continue;
-      best = { score: r.score, move: r.move, pv: extended };
+      best = { score: r.score, move: r.move, pv: extended, nodes: totalNodes };
       break;
     }
-    if (r.move) best = r;
+    if (r.move) best = { score: r.score, move: r.move, pv: r.pv, nodes: totalNodes };
   }
   return best;
 }

@@ -10,4 +10,4 @@
 - Placement (`canPlaceAt`): king/advisor→palace, elephant→7 fixed own-side positions, soldier (pre-river)→row 5/6 (red) or 3/4 (black), col 0/2/4/6/8
 - Click a result tree node to restore board to that position; drag a piece off the board (to palette area) to remove it
 - Drag-and-drop is mouse-only (pointer events); 行動裝置/touch 不在考量範圍，不需處理 touch 事件或行動版布局
-- No lint/format/test commands exist
+- Tests: `node --test` runs the unit/integration suites in `test/` (`test/*.test.mjs`, node:test, auto-discovered; require Node 22+). Benchmark: `node bench.mjs <fen> [depth] [timeLimitMs]` prints score/nodes/ms/NPS/PV. No build tools or package manager beyond that.
