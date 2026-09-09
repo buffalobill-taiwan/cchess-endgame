@@ -94,7 +94,7 @@ export const PIECE_TO_FEN = {
   black: { king:'k', advisor:'a', elephant:'b', horse:'n', chariot:'r', cannon:'c', soldier:'p' },
 };
 
-export function boardToFen(b) {
+export function boardToFen(b, sideToMove = 'w') {
   let rows = [];
   for (let r = 0; r < ROWS; r++) {
     let row = '';
@@ -108,7 +108,7 @@ export function boardToFen(b) {
     if (empty > 0) row += empty;
     rows.push(row);
   }
-  return rows.join('/') + ' w - - 0 1';
+  return rows.join('/') + ` ${sideToMove} - - 0 1`;
 }
 
 export function parseFen(fen) {
