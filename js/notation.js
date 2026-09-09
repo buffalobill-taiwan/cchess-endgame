@@ -11,7 +11,8 @@ const AN = '　１２３４５６７８９';
 const DISAMBIG = {
   2: ['前', '後'],
   3: ['前', '中', '後'],
-  4: ['前', '二', '三', '後'],
+  4: ['前', '二', '三', '四'],
+  5: ['前', '二', '三', '四', '五'],
 };
 
 function colNum(col, color) {
@@ -31,16 +32,37 @@ function sameFilePieces(b, row, col, color, type) {
   return { idx, total: rows.length };
 }
 
+function rankLabel(b, row, col, color, type) {
+  const { idx, total } = sameFilePieces(b, row, col, color, type);
+  if (total < 2) return null;
+  const labels = DISAMBIG[Math.min(total, 5)];
+  return labels[Math.min(idx, labels.length - 1)];
+}
+
+function labelCount(b, color, type, label) {
+  let n = 0;
+  for (let r = 0; r < ROWS; r++) {
+    for (let c = 0; c < COLS; c++) {
+      const q = b[r][c];
+      if (!q || q.color !== color || q.type !== type) continue;
+      if (rankLabel(b, r, c, color, type) === label) n++;
+    }
+  }
+  return n;
+}
+
 export function moveToNotation(b, move, color) {
   const p = b[move.from.row][move.from.col];
   const ch = CHARS[color][p.type];
   const num = color === 'red' ? CN : AN;
-  const { idx, total } = sameFilePieces(b, move.from.row, move.from.col, color, p.type);
+  const { total } = sameFilePieces(b, move.from.row, move.from.col, color, p.type);
 
   let src;
   if (total >= 2) {
-    const labels = DISAMBIG[Math.min(total, 4)];
-    src = labels[Math.min(idx, labels.length - 1)] + ch;
+    const label = rankLabel(b, move.from.row, move.from.col, color, p.type);
+    src = labelCount(b, color, p.type, label) > 1
+      ? label + ch + num[colNum(move.from.col, color)]
+      : label + ch;
   } else {
     src = ch + num[colNum(move.from.col, color)];
   }

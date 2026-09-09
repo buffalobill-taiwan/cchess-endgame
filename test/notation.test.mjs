@@ -53,3 +53,57 @@ test('moveToNotation disambiguates same-file pieces (前/後)', () => {
   assert.equal(moveToNotation(board, upper, 'red'), '前俥進一');
   assert.equal(moveToNotation(board, lower, 'red'), '後俥平五');
 });
+
+test('moveToNotation appends file number when 前/後 labels collide across files (red)', () => {
+  // 六路 (col 3) and 四路 (col 5) each have two red soldiers
+  const fen = 'k4P3/3P5/5P3/3P5/9/9/9/9/9/4K4';
+  const { board } = parseFen(fen);
+  const sixFront = { from: { row: 1, col: 3 }, to: { row: 1, col: 4 }, captured: null };
+  const fourFront = { from: { row: 0, col: 5 }, to: { row: 0, col: 4 }, captured: null };
+  assert.equal(moveToNotation(board, sixFront, 'red'), '前兵六平五');
+  assert.equal(moveToNotation(board, fourFront, 'red'), '前兵四平五');
+});
+
+test('moveToNotation appends file number when 前/後 labels collide across files (black)', () => {
+  // 2路 (col 1) and 4路 (col 3) each have two black soldiers; black 前 = larger row
+  const fen = '4K4/9/9/9/9/1p7/3p5/1p7/3p5/4k4';
+  const { board } = parseFen(fen);
+  const atTwo = { from: { row: 7, col: 1 }, to: { row: 7, col: 2 }, captured: null };
+  const atFour = { from: { row: 8, col: 3 }, to: { row: 8, col: 4 }, captured: null };
+  assert.equal(moveToNotation(board, atTwo, 'black'), '前卒２平３');
+  assert.equal(moveToNotation(board, atFour, 'black'), '前卒４平５');
+});
+
+test('moveToNotation keeps pure 前/後 when only one file is stacked', () => {
+  // Only 六路 (col 3) has two soldiers; 二路 (col 7) has a single one
+  const fen = '4k4/9/3P5/9/9/9/3P5/9/7P1/4K4';
+  const { board } = parseFen(fen);
+  const front = { from: { row: 2, col: 3 }, to: { row: 1, col: 3 }, captured: null };
+  const rear = { from: { row: 6, col: 3 }, to: { row: 6, col: 4 }, captured: null };
+  const single = { from: { row: 8, col: 7 }, to: { row: 7, col: 7 }, captured: null };
+  assert.equal(moveToNotation(board, front, 'red'), '前兵進一');
+  assert.equal(moveToNotation(board, rear, 'red'), '後兵平五');
+  assert.equal(moveToNotation(board, single, 'red'), '兵二進一');
+});
+
+test('moveToNotation uses 前/中/後 and 前二三四五 for deeper stacks', () => {
+  // 五路 (col 4): three soldiers at rows 1,3,5 + one at row 7 → 前/二/三/四
+  const four = '4k4/4P4/9/4P4/9/4P4/9/4P4/9/4K4';
+  const { board: b4 } = parseFen(four);
+  const third = { from: { row: 5, col: 4 }, to: { row: 4, col: 4 }, captured: null };
+  const last4 = { from: { row: 7, col: 4 }, to: { row: 6, col: 4 }, captured: null };
+  assert.equal(moveToNotation(b4, third, 'red'), '三兵進一');
+  assert.equal(moveToNotation(b4, last4, 'red'), '四兵進一');
+
+  // 2路 (col 7): three soldiers at rows 2,4,6 → 前/中/後
+  const three = '4k4/9/7P1/9/7P1/9/7P1/9/9/4K4';
+  const { board: b3 } = parseFen(three);
+  const middle = { from: { row: 4, col: 7 }, to: { row: 3, col: 7 }, captured: null };
+  assert.equal(moveToNotation(b3, middle, 'red'), '中兵進一');
+
+  // 五路 (col 4): five soldiers at rows 0..4 → 前/二/三/四/五
+  const five = 'k3P4/4P4/4P4/4P4/4P4/9/9/9/9/4K4';
+  const { board: b5 } = parseFen(five);
+  const last5 = { from: { row: 4, col: 4 }, to: { row: 3, col: 4 }, captured: null };
+  assert.equal(moveToNotation(b5, last5, 'red'), '五兵進一');
+});
