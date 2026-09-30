@@ -94,6 +94,7 @@ export const PIECE_TO_FEN = {
 };
 
 export function boardToFen(b, sideToMove = 'w') {
+  if (sideToMove !== 'w' && sideToMove !== 'b') throw new Error('FEN行棋方應為 w 或 b');
   let rows = [];
   for (let r = 0; r < ROWS; r++) {
     let row = '';
@@ -113,6 +114,8 @@ export function boardToFen(b, sideToMove = 'w') {
 export function parseFen(fen, { allowMissingKings = true } = {}) {
   if (!fen || !fen.trim()) throw new Error('空 FEN');
   const parts = fen.trim().split(/\s+/);
+  const sideToMove = parts[1] ?? 'w';
+  if (sideToMove !== 'w' && sideToMove !== 'b') throw new Error('FEN行棋方應為 w 或 b');
   const rows = parts[0].split('/');
   if (rows.length !== ROWS) throw new Error(`棋盤應為 ${ROWS} 行，實際 ${rows.length} 行`);
   const board = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
@@ -145,5 +148,5 @@ export function parseFen(fen, { allowMissingKings = true } = {}) {
   if (blackKings > 1) throw new Error('黑方超過一個將');
   if (!allowMissingKings && redKings !== 1) throw new Error('缺少紅方帥');
   if (!allowMissingKings && blackKings !== 1) throw new Error('缺少黑方將');
-  return { board, redKing, blackKing };
+  return { board, redKing, blackKing, sideToMove };
 }

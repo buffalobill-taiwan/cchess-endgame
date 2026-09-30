@@ -15,4 +15,5 @@ test('analyzePosition reports cancellation without relying on UI state', async (
   const { board } = parseFen('3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1 w - - 0 1');
   const result = await analyzePosition(board, { depth: 12, timeLimit: 1000, isCancelled: () => true });
   assert.equal(result.interrupted, true);
+  assert.equal(result.tree, null);
 });

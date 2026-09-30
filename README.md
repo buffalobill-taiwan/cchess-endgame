@@ -22,14 +22,25 @@
 ## 技術架構
 
 - 純 HTML/CSS/JavaScript，無框架、無建置工具
+- UI 入口、分析控制、範例 modal、範例儲存分層，核心分析維持 DOM-free
 - 棋盤使用 SVG 繪製
 - 完整的象棋規則引擎（所有七種棋子、王見王、困斃）
 - Iterative-deepening alpha-beta 搜尋（可調深度，15 秒時間限制）
 - Incremental make/unmake moves（由搜尋 context 管理的可回復棋盤，不依賴全域引擎棋盤）
 - 搜尋與變著樹共用同一個總 deadline；中斷或逾時只提交完整的 iterative-deepening 深度
+- 逾時的 refutation 不會被加入結果樹；分析中斷時不顯示部分變著樹
 - 疊代加深 refutation 搜尋：從 depth 2 開始逐步加深，找到殺棋即停
 - 變著樹利用 refutation PV 建構深層子樹，非必勝分枝自動跳過
 
 ## 測試
 
 使用 `node --test` 執行 `test/` 下的規則、FEN、hash 與搜尋測試；使用 `node bench.mjs <fen> [depth] [timeLimitMs]` 進行 headless benchmark。
+
+瀏覽器手動驗收建議：
+
+- 從調色盤拖曳棋子到合法與非法位置，確認合法位置提示與棋子數量。
+- 拖曳棋盤上的棋子移動、拖出棋盤移除，確認 FEN 同步更新。
+- 匯入 `w` FEN 與 `b` FEN，確認工具只接受紅方 `w` 分析。
+- 分析中按「中斷」，確認不顯示未完成變著樹，且控制項恢復可用。
+- 點擊結果樹節點與「原始局面」，確認棋盤可正確還原。
+- 在「我的範例」新增、載入、刪除資料，並測試 localStorage 不可用時的錯誤提示。

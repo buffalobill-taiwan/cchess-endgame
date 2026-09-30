@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseFen } from '../js/notation.js';
 import { deepCopyBoard, applyBoardCopy } from '../js/board.js';
-import { searchRootAsync } from '../js/search.js';
+import { searchRootAsync, findRefutation } from '../js/search.js';
 import { generateLegalMoves, isInCheck } from '../js/rules.js';
 
 const fen = '3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1 w - - 0 1';
@@ -33,4 +33,13 @@ test('deadline prevents an incomplete deepening iteration from being returned', 
   const result = await searchRootAsync(deepCopyBoard(board), 20, 1);
   assert.equal(result.interrupted, true);
   assert.ok(result.nodes >= 0);
+});
+
+test('cancelled refutation is never reported as complete', async () => {
+  const { board } = parseFen(fen);
+  const result = await findRefutation(deepCopyBoard(board), 'red', 8, Date.now(), 2000, {
+    isCancelled: () => true,
+  });
+  assert.equal(result.interrupted, true);
+  assert.equal(result.move, null);
 });

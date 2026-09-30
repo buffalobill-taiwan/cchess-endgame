@@ -13,4 +13,11 @@ test('FEN rejects malformed rows and duplicate kings', () => {
   assert.throws(() => parseFen('9/9/9/9/9/9/9/9/9/9/9'), /10/);
   assert.throws(() => parseFen('4K4/4K4/9/9/9/9/9/9/9/4k4'), /超過一個帥/);
   assert.throws(() => parseFen('9/9/9/9/9/9/9/9/9/4X4'), /未知棋子/);
+  assert.throws(() => parseFen('4k4/9/9/9/9/9/9/9/9/4K4 x - - 0 1'), /行棋方/);
+});
+
+test('FEN exposes side to move and strict serialization', () => {
+  const { board, sideToMove } = parseFen('4k4/9/9/9/9/9/9/9/9/4K4 b - - 0 1', { allowMissingKings: false });
+  assert.equal(sideToMove, 'b');
+  assert.throws(() => boardToFen(board, 'x'), /行棋方/);
 });

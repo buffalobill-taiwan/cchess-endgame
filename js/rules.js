@@ -129,6 +129,16 @@ export function isStalemate(b, color) {
   return !isInCheck(b, color) && generateLegalMoves(b, color).length === 0;
 }
 
+// Compute both terminal states with one legal-move generation.
+export function terminalState(b, color) {
+  const inCheck = isInCheck(b, color);
+  const moves = generateLegalMoves(b, color);
+  return {
+    isMate: inCheck && moves.length === 0,
+    isStalemate: !inCheck && moves.length === 0,
+  };
+}
+
 // ─── Pseudo-legal move generators ───
 
 function generatePseudoMoves(b, row, col) {

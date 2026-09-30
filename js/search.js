@@ -127,6 +127,23 @@ function stopped(ctx) {
   return ctx.isCancelled() || Date.now() >= ctx.deadline;
 }
 
+function createSearchContext(options) {
+  return {
+    deadline: options.deadline,
+    isCancelled: options.isCancelled ?? (() => false),
+    continuousCheck: options.continuousCheck ?? false,
+    maxDepth: options.maxDepth,
+    aborted: false,
+    repSet: options.repSet ?? new Set(),
+    tt: options.tt ?? new Array(TT_SIZE),
+    killers: options.killers ?? [],
+    repCount: 0,
+    nodes: 0,
+    orderScratch: options.orderScratch ?? new Int32Array(ORDER_SCRATCH_LEN),
+    yieldState: { lastYield: Date.now() },
+  };
+}
+
 // Compact 64-bit Zobrist key for repetition detection (collision-resistant).
 function repKey(h) {
   return ((BigInt(h.lo) & 0xFFFFFFFFn) << 32n) | (BigInt(h.hi) & 0xFFFFFFFFn);
@@ -392,13 +409,7 @@ async function extendMatePV(board, pv, color, options) {
     if (generateLegalMoves(b, side).length === 0) return { extended, verified: true };
     const seed = new Set(lineKeys);
     seed.delete(repKey(h));
-    const ctx = {
-      deadline: options.deadline, isCancelled: options.isCancelled,
-      continuousCheck: options.continuousCheck, maxDepth: 4, aborted: false,
-      repSet: seed, tt, killers: [], repCount: 0, nodes: 0,
-      orderScratch,
-      yieldState: { lastYield: Date.now() },
-    };
+    const ctx = createSearchContext({ ...options, maxDepth: 4, repSet: seed, tt, killers: [], orderScratch });
     const r = await alphaBeta(b, side, 0, -INF, INF, ctx, h);
     if (!r.move || !r.completed) break;
     makeMove(b, r.move, h);
@@ -424,12 +435,7 @@ export async function searchRootAsync(b, maxDepth, timeLimit, options = {}) {
   const rootHash = zobristFromBoard(b, 'red', continuousCheck);
   for (let d = 1; d <= maxDepth; d++) {
     if (isCancelled() || Date.now() >= deadline) break;
-    const ctx = {
-      deadline, isCancelled, continuousCheck, maxDepth: d, aborted: false,
-      repSet: new Set(), tt, killers, repCount: 0, nodes: 0,
-      orderScratch,
-      yieldState: { lastYield: Date.now() },
-    };
+    const ctx = createSearchContext({ deadline, isCancelled, continuousCheck, maxDepth: d, tt, killers, orderScratch });
     const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx, rootHash);
     totalNodes += ctx.nodes;
     if (!r.completed) break;
@@ -461,12 +467,7 @@ export async function findRefutation(b, color, maxDepth, startTime, timeLimit, o
   const rootHash = zobristFromBoard(b, color, continuousCheck);
   for (let d = 2; d <= maxDepth; d += 2) {
     if (isCancelled() || Date.now() >= deadline) break;
-    const ctx = {
-      deadline, isCancelled, continuousCheck, maxDepth: d, aborted: false,
-      repSet: new Set(), tt, killers, repCount: 0, nodes: 0,
-      orderScratch,
-      yieldState: { lastYield: Date.now() },
-    };
+    const ctx = createSearchContext({ deadline, isCancelled, continuousCheck, maxDepth: d, tt, killers, orderScratch });
     const r = await alphaBeta(b, color, 0, -INF, INF, ctx, rootHash);
     totalNodes += ctx.nodes;
     if (!r.completed) break;

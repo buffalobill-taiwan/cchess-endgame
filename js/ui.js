@@ -390,15 +390,21 @@ export function showResult(pvTree, score, interrupted, initialBoard) {
   const rc = document.getElementById('result-content');
   rc.innerHTML = '';
 
+  const setMessage = message => {
+    const p = document.createElement('p');
+    p.textContent = message;
+    rc.replaceChildren(p);
+  };
+
   if (!pvTree) {
-    rc.innerHTML = interrupted ? '<p>分析中斷</p>' : state.continuousCheck ? '<p>未找到連將殺必勝著法</p>' : '<p>無可用著法</p>';
+    setMessage(interrupted ? '分析中斷' : state.continuousCheck ? '未找到連將殺必勝著法' : '無可用著法');
     return;
   }
 
   if (!interrupted) {
     if (Math.abs(score) < MATE_VAL / 2) {
       const verdict = score > 0 ? `紅方優勢 (${score})` : score < 0 ? `黑方優勢 (${Math.abs(score)})` : '均勢';
-      rc.innerHTML = `<p>未找到必勝著法。${verdict}</p>`;
+      setMessage(`未找到必勝著法。${verdict}`);
     }
   }
 

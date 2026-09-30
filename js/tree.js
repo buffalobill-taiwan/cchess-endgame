@@ -4,7 +4,7 @@
 
 import { MATE_VAL, REFUTATION_TIME_LIMIT, MIN_REF_DEPTH } from './constants.js';
 import { opp, movesEqual } from './state.js';
-import { isInCheck, generateLegalMoves } from './rules.js';
+import { isInCheck, generateLegalMoves, terminalState } from './rules.js';
 import { deepCopyBoard, applyBoardCopy } from './board.js';
 import { moveToNotation } from './notation.js';
 import { findRefutation } from './search.js';
@@ -17,14 +17,7 @@ export function generateForcedMoves(b, side, continuousCheck = false) {
   return moves.filter(m => isInCheck(applyBoardCopy(b, m), 'black'));
 }
 
-function evalOn(b, color) {
-  const inCheck = isInCheck(b, color);
-  const moves = generateLegalMoves(b, color);
-  return {
-    isMate: inCheck && moves.length === 0,
-    isStalemate: !inCheck && moves.length === 0,
-  };
-}
+const evalOn = terminalState;
 
 // Refute `mover`'s continuations from position `pos` (turn = `mover`) by
 // searching with `searchColor`. Returns the refutation children of the
@@ -36,7 +29,7 @@ export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
   const start = Date.now();
   const ref = await findRefutation(pos, searchColor, cfg.refDepth, start,
     Math.min(REFUTATION_TIME_LIMIT, Math.max(1, (context?.deadline ?? (start + REFUTATION_TIME_LIMIT)) - start)), context);
-  if (!ref || !ref.move) return [];
+  if (!ref || ref.interrupted || !ref.move) return [];
 
   const refBoard = applyBoardCopy(pos, ref.move);
   const refNode = {
@@ -57,7 +50,7 @@ export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
       const ref2 = await findRefutation(rrBoard, searchColor, cfg.refDepth2, ref2Start,
         Math.min(REFUTATION_TIME_LIMIT, Math.max(1, (context?.deadline ?? (ref2Start + REFUTATION_TIME_LIMIT)) - ref2Start)), context);
       const children2 = [];
-      if (ref2 && ref2.move && Math.abs(ref2.score) > MATE_VAL / 2) {
+      if (ref2 && !ref2.interrupted && ref2.move && Math.abs(ref2.score) > MATE_VAL / 2) {
         const ref2Board = applyBoardCopy(rrBoard, ref2.move);
         const ref2State = evalOn(ref2Board, mover);
         const ref2Children = [];

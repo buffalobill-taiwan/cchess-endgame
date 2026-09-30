@@ -11,9 +11,14 @@ const PIECE_INDEX = {
   black: { king:7, advisor:8, elephant:9, horse:10, chariot:11, cannon:12, soldier:13 },
 };
 
-// ─── Random key tables (generated once at load) ───
+// ─── Deterministic key tables (generated once at load) ───
 
-function rand32() { return Math.floor(Math.random() * 0x100000000) | 0; }
+let randomState = 0x9e3779b9;
+function rand32() {
+  randomState = Math.imul(randomState ^ (randomState >>> 16), 0x21f0aaad);
+  randomState = Math.imul(randomState ^ (randomState >>> 15), 0x735a2d97);
+  return (randomState ^ (randomState >>> 15)) | 0;
+}
 
 const NUM_PIECE_TYPES = 14;
 const NUM_SQUARES = ROWS * COLS; // 90
