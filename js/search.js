@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 
 import { ROWS, COLS, PIECE_VALUES, MATE_VAL, INF, TT_SIZE, TT_MASK } from './constants.js';
-import { state, opp, movesEqual } from './state.js';
+import { opp, movesEqual } from './state.js';
 import { isInCheck, generateLegalMoves, generateCaptureMoves, makeMove, unmakeMove } from './rules.js';
 import { zobristFromBoard } from './zobrist.js';
 import { pieceInfo } from './board.js';
@@ -123,7 +123,11 @@ function orderMoves(ctx, moves, b, ttMove, killers, ply) {
 
 const TT_FLAG = { UPPER: -1, EXACT: 0, LOWER: 1 };
 
-// Compact 64-bit Zobrist key for repetition detection (exact, collision-free).
+function stopped(ctx) {
+  return ctx.isCancelled() || Date.now() >= ctx.deadline;
+}
+
+// Compact 64-bit Zobrist key for repetition detection (collision-resistant).
 function repKey(h) {
   return ((BigInt(h.lo) & 0xFFFFFFFFn) << 32n) | (BigInt(h.hi) & 0xFFFFFFFFn);
 }
@@ -168,8 +172,7 @@ function givesCheck(b, m, undo, color, info) {
 
 function quiesce(b, color, alpha, beta, ctx, ply, hash, info) {
   ctx.nodes++;
-  if (state.interruptRequested) return evaluate(b);
-  if (Date.now() - ctx.startTime > ctx.timeLimit) return evaluate(b);
+  if (stopped(ctx)) { ctx.aborted = true; return evaluate(b); }
   if (ply > 64) return evaluate(b);
 
   const ttIdx = hash.lo & TT_MASK;
@@ -196,7 +199,7 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash, info) {
     orderMoves(ctx, moves, b, ttHit ? ttEntry.move : null, ctx.killers, ply);
     let bestScore = color === 'red' ? -INF : INF;
     for (const m of moves) {
-      if (state.interruptRequested) break;
+      if (stopped(ctx)) { ctx.aborted = true; break; }
       const undo = makeMove(b, m, hash);
       const s = quiesce(b, opp(color), alpha, beta, ctx, ply + 1, hash);
       unmakeMove(b, m, undo, hash);
@@ -209,7 +212,7 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash, info) {
       }
       if (alpha >= beta) break;
     }
-    if (!state.interruptRequested) {
+    if (!ctx.aborted) {
       let flag;
       if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
       else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
@@ -231,7 +234,7 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash, info) {
   orderMoves(ctx, caps, b, null, [], 0);
   const alpha0 = alpha, beta0 = beta;
   for (const m of caps) {
-    if (state.interruptRequested) break;
+    if (stopped(ctx)) { ctx.aborted = true; break; }
     const undo = makeMove(b, m, hash);
     const s = quiesce(b, opp(color), alpha, beta, ctx, ply + 1, hash);
     unmakeMove(b, m, undo, hash);
@@ -248,7 +251,7 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash, info) {
     }
   }
   const bestScore = color === 'red' ? alpha : beta;
-  if (!state.interruptRequested) {
+  if (!ctx.aborted) {
     let flag;
     if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
     else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
@@ -262,13 +265,15 @@ function quiesce(b, color, alpha, beta, ctx, ply, hash, info) {
 
 async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
   ctx.nodes++;
-  if (state.interruptRequested) return { score: evaluate(b), move: null, pv: [] };
-  if (Date.now() - ctx.startTime > ctx.timeLimit) return { score: evaluate(b), move: null, pv: [] };
+  if (stopped(ctx)) {
+    ctx.aborted = true;
+    return { score: evaluate(b), move: null, pv: [], completed: false };
+  }
 
   const rk = repKey(hash);
   if (ctx.repSet.has(rk)) {
     ctx.repCount++;
-    return { score: 0, move: null, pv: [] };
+    return { score: 0, move: null, pv: [], completed: true };
   }
   ctx.repSet.add(rk);
   const repBase = ctx.repCount;
@@ -277,22 +282,23 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
     const remDepth = ctx.maxDepth - depth;
     if (remDepth <= 0) {
       const info = pieceInfo(b);
-      return { score: quiesce(b, color, alpha, beta, ctx, 0, hash, info), move: null, pv: [] };
+      const score = quiesce(b, color, alpha, beta, ctx, 0, hash, info);
+      return { score, move: null, pv: [], completed: !ctx.aborted };
     }
 
     const ttIdx = hash.lo & TT_MASK;
     const ttEntry = ctx.tt[ttIdx];
     const ttHit = !!ttEntry && ttEntry.hashLo === hash.lo && ttEntry.hashHi === hash.hi;
     if (ttHit && ttEntry.depth >= remDepth) {
-      if (ttEntry.flag === TT_FLAG.EXACT) return { score: ttEntry.score, move: ttEntry.move, pv: [] };
-      if (ttEntry.flag === TT_FLAG.LOWER && ttEntry.score >= beta) return { score: ttEntry.score, move: ttEntry.move, pv: [] };
-      if (ttEntry.flag === TT_FLAG.UPPER && ttEntry.score <= alpha) return { score: ttEntry.score, move: ttEntry.move, pv: [] };
+      if (ttEntry.flag === TT_FLAG.EXACT) return { score: ttEntry.score, move: ttEntry.move, pv: [], completed: true };
+      if (ttEntry.flag === TT_FLAG.LOWER && ttEntry.score >= beta) return { score: ttEntry.score, move: ttEntry.move, pv: [], completed: true };
+      if (ttEntry.flag === TT_FLAG.UPPER && ttEntry.score <= alpha) return { score: ttEntry.score, move: ttEntry.move, pv: [], completed: true };
     }
     const ttMove = ttHit ? ttEntry.move : null;
 
     const info = pieceInfo(b);
     let moves = generateLegalMoves(b, color, info);
-    if (state.continuousCheck && color === 'red') {
+    if (ctx.continuousCheck && color === 'red') {
       moves = moves.filter(m => {
         const undo = makeMove(b, m);
         const check = givesCheck(b, m, undo, 'red', info);
@@ -303,7 +309,7 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
     if (moves.length === 0) {
       const s = (color === 'red' ? -1 : 1) * (MATE_VAL - depth);
       storeTT(ctx, ttIdx, hash, remDepth, s, TT_FLAG.EXACT, null);
-      return { score: s, move: null, pv: [] };
+      return { score: s, move: null, pv: [], completed: true };
     }
 
     orderMoves(ctx, moves, b, ttMove, ctx.killers, depth);
@@ -313,13 +319,12 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
     const alpha0 = alpha, beta0 = beta;
 
     for (const m of moves) {
-      if (state.interruptRequested) break;
+      if (stopped(ctx)) { ctx.aborted = true; break; }
 
       if (Date.now() - ctx.yieldState.lastYield > 30) {
         await new Promise(r => setTimeout(r, 0));
         ctx.yieldState.lastYield = Date.now();
-        if (state.interruptRequested) break;
-        if (Date.now() - ctx.startTime > ctx.timeLimit) break;
+        if (stopped(ctx)) { ctx.aborted = true; break; }
       }
 
       const undo = makeMove(b, m, hash);
@@ -346,11 +351,11 @@ async function alphaBeta(b, color, depth, alpha, beta, ctx, hash) {
     if (bestScore <= alpha0) flag = TT_FLAG.UPPER;
     else if (bestScore >= beta0) flag = TT_FLAG.LOWER;
     else flag = TT_FLAG.EXACT;
-    if (ctx.repCount === repBase) {
+    if (!ctx.aborted && ctx.repCount === repBase) {
       storeTT(ctx, ttIdx, hash, remDepth, bestScore, flag, bestMove);
     }
 
-    return { score: bestScore, move: bestMove, pv: bestPV };
+    return { score: bestScore, move: bestMove, pv: bestPV, completed: !ctx.aborted };
   } finally {
     ctx.repSet.delete(rk);
   }
@@ -368,10 +373,10 @@ function cloneBoard(b) {
 // The replayed line is treated as history so the extension refuses to cycle
 // (perpetual check), and `verified` is only true when a real terminal mate is
 // reached without repeating any position. `color` is the side to move on `board`.
-async function extendMatePV(board, pv, color, startTime, timeLimit) {
+async function extendMatePV(board, pv, color, options) {
   const b = cloneBoard(board);
   let side = color;
-  const h = zobristFromBoard(b, side, state.continuousCheck);
+  const h = zobristFromBoard(b, side, options.continuousCheck);
   const tt = new Array(TT_SIZE);
   const orderScratch = new Int32Array(ORDER_SCRATCH_LEN);
   const lineKeys = new Set([repKey(h)]);
@@ -383,18 +388,19 @@ async function extendMatePV(board, pv, color, startTime, timeLimit) {
   }
   const extended = pv.slice();
   for (let i = 0; i < 40; i++) {
-    if (Date.now() - startTime > timeLimit) break;
+    if (Date.now() >= options.deadline || options.isCancelled()) break;
     if (generateLegalMoves(b, side).length === 0) return { extended, verified: true };
     const seed = new Set(lineKeys);
     seed.delete(repKey(h));
     const ctx = {
-      startTime, timeLimit, maxDepth: 4,
+      deadline: options.deadline, isCancelled: options.isCancelled,
+      continuousCheck: options.continuousCheck, maxDepth: 4, aborted: false,
       repSet: seed, tt, killers: [], repCount: 0, nodes: 0,
       orderScratch,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, side, 0, -INF, INF, ctx, h);
-    if (!r.move) break;
+    if (!r.move || !r.completed) break;
     makeMove(b, r.move, h);
     side = opp(side);
     if (lineKeys.has(repKey(h))) break;
@@ -405,27 +411,31 @@ async function extendMatePV(board, pv, color, startTime, timeLimit) {
   return { extended, verified: false };
 }
 
-export async function searchRootAsync(b, maxDepth, timeLimit) {
+export async function searchRootAsync(b, maxDepth, timeLimit, options = {}) {
   const startTime = Date.now();
-  let best = { score: 0, move: null, pv: [] };
+  const deadline = Math.min(options.deadline ?? (startTime + timeLimit), startTime + timeLimit);
+  const isCancelled = options.isCancelled ?? (() => false);
+  const continuousCheck = options.continuousCheck ?? false;
+  let best = { score: 0, move: null, pv: [], nodes: 0 };
   const tt = new Array(TT_SIZE);
   const killers = [];
   const orderScratch = new Int32Array(ORDER_SCRATCH_LEN);
   let totalNodes = 0;
-  const rootHash = zobristFromBoard(b, 'red', state.continuousCheck);
+  const rootHash = zobristFromBoard(b, 'red', continuousCheck);
   for (let d = 1; d <= maxDepth; d++) {
-    if (state.interruptRequested) break;
+    if (isCancelled() || Date.now() >= deadline) break;
     const ctx = {
-      startTime, timeLimit, maxDepth: d,
+      deadline, isCancelled, continuousCheck, maxDepth: d, aborted: false,
       repSet: new Set(), tt, killers, repCount: 0, nodes: 0,
       orderScratch,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, 'red', 0, -INF, INF, ctx, rootHash);
     totalNodes += ctx.nodes;
+    if (!r.completed) break;
     best = { score: r.score, move: r.move, pv: r.pv, nodes: totalNodes };
     if (Math.abs(r.score) > MATE_VAL / 2) {
-      const { extended, verified } = await extendMatePV(b, r.pv, 'red', startTime, timeLimit);
+      const { extended, verified } = await extendMatePV(b, r.pv, 'red', { deadline, isCancelled, continuousCheck });
       if (!verified) {
         best = { score: 0, move: r.move, pv: [], nodes: totalNodes };
         continue;
@@ -433,35 +443,41 @@ export async function searchRootAsync(b, maxDepth, timeLimit) {
       best.pv = extended;
       break;
     }
-    if (Date.now() - startTime >= timeLimit) break;
+    if (Date.now() >= deadline) break;
   }
+  best.interrupted = isCancelled() || Date.now() >= deadline;
   return best;
 }
 
-export async function findRefutation(b, color, maxDepth, startTime, timeLimit) {
-  let best = { score: 0, move: null, pv: [] };
+export async function findRefutation(b, color, maxDepth, startTime, timeLimit, options = {}) {
+  const deadline = Math.min(options.deadline ?? (startTime + timeLimit), startTime + timeLimit);
+  const isCancelled = options.isCancelled ?? (() => false);
+  const continuousCheck = options.continuousCheck ?? false;
+  let best = { score: 0, move: null, pv: [], nodes: 0 };
   const tt = new Array(TT_SIZE);
   const killers = [];
   const orderScratch = new Int32Array(ORDER_SCRATCH_LEN);
   let totalNodes = 0;
-  const rootHash = zobristFromBoard(b, color, state.continuousCheck);
+  const rootHash = zobristFromBoard(b, color, continuousCheck);
   for (let d = 2; d <= maxDepth; d += 2) {
-    if (state.interruptRequested || Date.now() - startTime > timeLimit) break;
+    if (isCancelled() || Date.now() >= deadline) break;
     const ctx = {
-      startTime, timeLimit, maxDepth: d,
+      deadline, isCancelled, continuousCheck, maxDepth: d, aborted: false,
       repSet: new Set(), tt, killers, repCount: 0, nodes: 0,
       orderScratch,
       yieldState: { lastYield: Date.now() },
     };
     const r = await alphaBeta(b, color, 0, -INF, INF, ctx, rootHash);
     totalNodes += ctx.nodes;
+    if (!r.completed) break;
     if (Math.abs(r.score) > MATE_VAL / 2) {
-      const { extended, verified } = await extendMatePV(b, r.pv, color, startTime, timeLimit);
+      const { extended, verified } = await extendMatePV(b, r.pv, color, { deadline, isCancelled, continuousCheck });
       if (!verified) continue;
       best = { score: r.score, move: r.move, pv: extended, nodes: totalNodes };
       break;
     }
     if (r.move) best = { score: r.score, move: r.move, pv: r.pv, nodes: totalNodes };
   }
+  best.interrupted = isCancelled() || Date.now() >= deadline;
   return best;
 }

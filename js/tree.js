@@ -3,24 +3,26 @@
 // ═══════════════════════════════════════════
 
 import { MATE_VAL, REFUTATION_TIME_LIMIT, MIN_REF_DEPTH } from './constants.js';
-import { state, opp, movesEqual } from './state.js';
-import { isInCheck, isCheckmate, isStalemate, generateLegalMoves } from './rules.js';
+import { opp, movesEqual } from './state.js';
+import { isInCheck, generateLegalMoves } from './rules.js';
 import { deepCopyBoard, applyBoardCopy } from './board.js';
 import { moveToNotation } from './notation.js';
 import { findRefutation } from './search.js';
 
 // Legal moves for `side`, restricted to check-giving moves when the
 // 連將殺 (continuous-check) mode is on and the side to move is red.
-export function generateForcedMoves(b, side) {
+export function generateForcedMoves(b, side, continuousCheck = false) {
   const moves = generateLegalMoves(b, side);
-  if (!state.continuousCheck || side !== 'red') return moves;
+  if (!continuousCheck || side !== 'red') return moves;
   return moves.filter(m => isInCheck(applyBoardCopy(b, m), 'black'));
 }
 
 function evalOn(b, color) {
+  const inCheck = isInCheck(b, color);
+  const moves = generateLegalMoves(b, color);
   return {
-    isMate: isCheckmate(b, color),
-    isStalemate: isStalemate(b, color),
+    isMate: inCheck && moves.length === 0,
+    isStalemate: !inCheck && moves.length === 0,
   };
 }
 
@@ -29,26 +31,31 @@ function evalOn(b, color) {
 // mover's node, or [] when no refutation was found. Kept in sync between
 // app.js (main-line branch) and pvToTree (variant expansion).
 export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
-  const ref = await findRefutation(pos, searchColor, cfg.refDepth, Date.now(), REFUTATION_TIME_LIMIT);
+  const context = cfg.context;
+  if (context && (context.isCancelled() || Date.now() >= context.deadline)) return [];
+  const start = Date.now();
+  const ref = await findRefutation(pos, searchColor, cfg.refDepth, start,
+    Math.min(REFUTATION_TIME_LIMIT, Math.max(1, (context?.deadline ?? (start + REFUTATION_TIME_LIMIT)) - start)), context);
   if (!ref || !ref.move) return [];
 
   const refBoard = applyBoardCopy(pos, ref.move);
   const refNode = {
     move: ref.move, notation: moveToNotation(pos, ref.move, searchColor),
     color: searchColor,
-    isMate: evalOn(refBoard, mover).isMate,
-    isStalemate: evalOn(refBoard, mover).isStalemate,
+    ...evalOn(refBoard, mover),
     children: [], board: deepCopyBoard(refBoard),
   };
 
   if (Math.abs(ref.score) > MATE_VAL / 2) {
-    const followMoves = generateForcedMoves(refBoard, mover);
+    const followMoves = generateForcedMoves(refBoard, mover, context?.continuousCheck);
     const followups = [];
     for (const rr of followMoves) {
-      if (state.interruptRequested) break;
+      if (context && (context.isCancelled() || Date.now() >= context.deadline)) break;
       const rrBoard = applyBoardCopy(refBoard, rr);
       const rrState = evalOn(rrBoard, searchColor);
-      const ref2 = await findRefutation(rrBoard, searchColor, cfg.refDepth2, Date.now(), REFUTATION_TIME_LIMIT);
+      const ref2Start = Date.now();
+      const ref2 = await findRefutation(rrBoard, searchColor, cfg.refDepth2, ref2Start,
+        Math.min(REFUTATION_TIME_LIMIT, Math.max(1, (context?.deadline ?? (ref2Start + REFUTATION_TIME_LIMIT)) - ref2Start)), context);
       const children2 = [];
       if (ref2 && ref2.move && Math.abs(ref2.score) > MATE_VAL / 2) {
         const ref2Board = applyBoardCopy(rrBoard, ref2.move);
@@ -59,7 +66,7 @@ export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
           const oppBoard = applyBoardCopy(ref2Board, oppMove);
           const oppState = evalOn(oppBoard, searchColor);
           const ref2Sub = ref2.pv.length > 2
-            ? await pvToTree(oppBoard, ref2.pv.slice(2), searchColor, cfg.pvStartDepth, cfg.pvMaxDepth, Date.now())
+            ? await pvToTree(oppBoard, ref2.pv.slice(2), searchColor, cfg.pvStartDepth, cfg.pvMaxDepth, context)
             : null;
           ref2Children.push({
             move: oppMove, notation: moveToNotation(ref2Board, oppMove, mover),
@@ -87,7 +94,7 @@ export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
     }
     refNode.children = followups;
   } else if (cfg.flatOnNonMate) {
-    const flatMoves = generateForcedMoves(refBoard, mover);
+    const flatMoves = generateForcedMoves(refBoard, mover, context?.continuousCheck);
     refNode.children = flatMoves.slice(0, 1).map(rr => {
       const nb = applyBoardCopy(refBoard, rr);
       const st = evalOn(nb, opp(mover));
@@ -102,8 +109,8 @@ export async function buildRefutationBranch(pos, mover, searchColor, cfg) {
   return [refNode];
 }
 
-export async function pvToTree(b, pv, color, depth, maxDepth, startTime) {
-  if (state.interruptRequested || !pv || pv.length === 0 || depth > maxDepth) return null;
+export async function pvToTree(b, pv, color, depth, maxDepth, context) {
+  if ((context && (context.isCancelled() || Date.now() >= context.deadline)) || !pv || pv.length === 0 || depth > maxDepth) return null;
 
   const m = pv[0];
   const rest = pv.slice(1);
@@ -117,17 +124,17 @@ export async function pvToTree(b, pv, color, depth, maxDepth, startTime) {
   };
 
   const nextColor = opp(color);
-  const responses = generateForcedMoves(nb, nextColor);
+  const responses = generateForcedMoves(nb, nextColor, context?.continuousCheck);
 
   for (const resp of responses) {
-    if (state.interruptRequested) break;
+    if (context && (context.isCancelled() || Date.now() >= context.deadline)) break;
     const respBoard = applyBoardCopy(nb, resp);
     const isPV = rest.length > 0 && movesEqual(resp, rest[0]);
     const respState = evalOn(respBoard, color);
     let childNode;
 
     if (isPV) {
-      const sub = await pvToTree(respBoard, rest.slice(1), color, depth + 1, maxDepth, startTime);
+      const sub = await pvToTree(respBoard, rest.slice(1), color, depth + 1, maxDepth, context);
       childNode = {
         move: resp, notation: moveToNotation(nb, resp, nextColor),
         color: nextColor,
@@ -149,7 +156,7 @@ export async function pvToTree(b, pv, color, depth, maxDepth, startTime) {
         pvStartDepth: depth + 3, pvMaxDepth: maxDepth,
         flatOnNonMate: true,
       };
-      const refChildren = await buildRefutationBranch(respBoard, nextColor, color, cfg);
+        const refChildren = await buildRefutationBranch(respBoard, nextColor, color, { ...cfg, context });
       if (refChildren.length === 0) continue;
       childNode = {
         move: resp, notation: moveToNotation(nb, resp, nextColor),

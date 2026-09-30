@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 
 import { MATE_VAL, ROOT_TIME_LIMIT, MIN_REF_DEPTH } from './constants.js';
-import { state, movesEqual } from './state.js';
+import { movesEqual } from './state.js';
 import { isCheckmate, isStalemate, generateLegalMoves } from './rules.js';
 import { moveToNotation } from './notation.js';
 import { searchRootAsync } from './search.js';
@@ -14,6 +14,9 @@ export async function analyzePosition(board, opts = {}) {
   const depth = opts.depth ?? 12;
   const timeLimit = opts.timeLimit ?? ROOT_TIME_LIMIT;
   const continuousCheck = opts.continuousCheck ?? false;
+  const deadline = opts.deadline ?? (Date.now() + timeLimit);
+  const isCancelled = opts.isCancelled ?? (() => false);
+  const context = { deadline, isCancelled, continuousCheck };
 
   const { red, black } = findKings(board);
   if (!red || !black) {
@@ -26,24 +29,24 @@ export async function analyzePosition(board, opts = {}) {
     return { status: 'redStalemated', tree: null, score: 0, interrupted: false };
   }
 
-  state.continuousCheck = continuousCheck;
   const boardCopy = deepCopyBoard(board);
-  const result = await searchRootAsync(boardCopy, depth, timeLimit);
+  const result = await searchRootAsync(boardCopy, depth, timeLimit, context);
+  const interrupted = result?.interrupted || isCancelled() || Date.now() >= deadline;
   let tree = null;
   if (result && result.move) {
     const isMateScore = Math.abs(result.score) > MATE_VAL / 2;
-    if (state.continuousCheck && !isMateScore) {
+    if (continuousCheck && !isMateScore) {
       tree = null;
     } else if (isMateScore && result.score < 0) {
       tree = { move: null, notation: '', color: 'red', isMate: false, isStalemate: false, children: [], board: null };
-      const redMoves = generateForcedMoves(boardCopy, 'red');
+      const redMoves = generateForcedMoves(boardCopy, 'red', continuousCheck);
       const cfg = {
         refDepth: Math.max(MIN_REF_DEPTH, depth - 2),
         refDepth2: Math.max(MIN_REF_DEPTH, depth - 4),
         pvStartDepth: 3, pvMaxDepth: depth, flatOnNonMate: false,
       };
       for (const rm of redMoves) {
-        if (state.interruptRequested) break;
+        if (isCancelled() || Date.now() >= deadline) break;
         const rmBoard = applyBoardCopy(boardCopy, rm);
         const rmState = {
           isMate: isCheckmate(rmBoard, 'black'),
@@ -56,7 +59,7 @@ export async function analyzePosition(board, opts = {}) {
             children: [], board: deepCopyBoard(rmBoard)
           });
         } else {
-          const refChildren = await buildRefutationBranch(rmBoard, 'red', 'black', cfg);
+          const refChildren = await buildRefutationBranch(rmBoard, 'red', 'black', { ...cfg, context });
           if (refChildren.length === 0) continue;
           tree.children.push({
             move: rm, notation: moveToNotation(boardCopy, rm, 'red'),
@@ -84,7 +87,7 @@ export async function analyzePosition(board, opts = {}) {
         pvStartDepth: 3, pvMaxDepth: depth, flatOnNonMate: false,
       };
       for (const bm of generateLegalMoves(nb, 'black')) {
-        if (state.interruptRequested) break;
+        if (isCancelled() || Date.now() >= deadline) break;
         const bmBoard = applyBoardCopy(nb, bm);
         const isPV = restPV.length > 0 && movesEqual(bm, restPV[0]);
         const bmState = {
@@ -94,7 +97,7 @@ export async function analyzePosition(board, opts = {}) {
         let childNode;
 
         if (isPV) {
-          const sub = await pvToTree(bmBoard, restPV.slice(1), 'red', 1, depth, Date.now());
+          const sub = await pvToTree(bmBoard, restPV.slice(1), 'red', 1, depth, context);
           childNode = {
             move: bm, notation: moveToNotation(nb, bm, 'black'),
             color: 'black',
@@ -119,7 +122,7 @@ export async function analyzePosition(board, opts = {}) {
             children: [], board: deepCopyBoard(bmBoard)
           };
         } else {
-          const refChildren = await buildRefutationBranch(bmBoard, 'black', 'red', cfg);
+          const refChildren = await buildRefutationBranch(bmBoard, 'black', 'red', { ...cfg, context });
           if (refChildren.length === 0) continue;
           childNode = {
             move: bm, notation: moveToNotation(nb, bm, 'black'),
@@ -137,6 +140,6 @@ export async function analyzePosition(board, opts = {}) {
     status: 'ok',
     tree,
     score: result ? result.score : 0,
-    interrupted: state.interruptRequested,
+    interrupted,
   };
 }

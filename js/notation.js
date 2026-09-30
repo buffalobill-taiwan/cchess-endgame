@@ -3,7 +3,6 @@
 // ═══════════════════════════════════════════
 
 import { ROWS, COLS, CHARS } from './constants.js';
-import { state, initBoard } from './state.js';
 
 const CN = '　一二三四五六七八九';
 const AN = '　１２３４５６７８９';
@@ -111,7 +110,7 @@ export function boardToFen(b, sideToMove = 'w') {
   return rows.join('/') + ` ${sideToMove} - - 0 1`;
 }
 
-export function parseFen(fen) {
+export function parseFen(fen, { allowMissingKings = true } = {}) {
   if (!fen || !fen.trim()) throw new Error('空 FEN');
   const parts = fen.trim().split(/\s+/);
   const rows = parts[0].split('/');
@@ -144,17 +143,7 @@ export function parseFen(fen) {
   }
   if (redKings > 1) throw new Error('紅方超過一個帥');
   if (blackKings > 1) throw new Error('黑方超過一個將');
+  if (!allowMissingKings && redKings !== 1) throw new Error('缺少紅方帥');
+  if (!allowMissingKings && blackKings !== 1) throw new Error('缺少黑方將');
   return { board, redKing, blackKing };
-}
-
-export function fenToBoard(fen) {
-  const { board } = parseFen(fen);
-  initBoard();
-  state.board = board;
-  state.pieceCount = 0;
-  for (let r = 0; r < ROWS; r++) {
-    for (let c = 0; c < COLS; c++) {
-      if (board[r][c]) state.pieceCount++;
-    }
-  }
 }

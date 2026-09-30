@@ -6,7 +6,6 @@
 import { parseFen, moveToNotation } from './js/notation.js';
 import { deepCopyBoard, applyBoardCopy } from './js/board.js';
 import { searchRootAsync } from './js/search.js';
-import { state } from './js/state.js';
 
 const fen = process.argv[2];
 const depth = parseInt(process.argv[3] || '6', 10);
@@ -18,9 +17,6 @@ if (!fen) {
 }
 
 const { board } = parseFen(fen);
-state.continuousCheck = false;
-state.interruptRequested = false;
-
 const b = deepCopyBoard(board);
 const t0 = process.hrtime.bigint();
 const res = await searchRootAsync(b, depth, timeLimit);

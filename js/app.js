@@ -4,15 +4,22 @@
 
 import { MAX_DEPTH, DEFAULT_DEPTH } from './constants.js';
 import { state, initBoard } from './state.js';
-import { fenToBoard } from './notation.js';
+import { parseFen } from './notation.js';
 import { deepCopyBoard } from './board.js';
 import { analyzePosition } from './analyze.js';
 import { renderBoard, renderPalette, setupDragDrop, updateStatus, renderPieces, showResult } from './ui.js';
+import { loadExamples, saveExamples } from './example-store.js';
 
 const LOCKABLE_IDS = ['btn-import-fen', 'btn-examples'];
 function lockControls(lock) {
   for (const id of LOCKABLE_IDS) document.getElementById(id).disabled = lock;
   document.getElementById('depth-slider').disabled = lock;
+}
+
+function loadFenIntoState(fen) {
+  const { board } = parseFen(fen);
+  state.board = board;
+  state.pieceCount = board.flat().filter(Boolean).length;
 }
 
 function analyze() {
@@ -35,7 +42,11 @@ function analyze() {
   const depth = Math.min(MAX_DEPTH, slider * 2);
   (async () => {
     try {
-      const res = await analyzePosition(initialBoard, { depth, continuousCheck: state.continuousCheck });
+      const res = await analyzePosition(initialBoard, {
+        depth,
+        continuousCheck: state.continuousCheck,
+        isCancelled: () => state.interruptRequested,
+      });
       const msg = {
         noKing: '請先擺放紅黑將帥',
         redMated: '紅方死棋，黑方勝',
@@ -94,7 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
       return;
     }
     try {
-      fenToBoard(fen);
+      loadFenIntoState(fen);
       renderPieces();
       updateStatus();
       document.getElementById('result-content').innerHTML = '';
@@ -119,18 +130,6 @@ document.addEventListener('DOMContentLoaded', () => {
     { label: '霹靂眼', fen: '3aR4/3ca4/b3k4/5P3/C1b2R3/9/4P3r/3AB4/3p1pr2/2N1K4 w - - 0 1' },
   ];
 
-  const MY_EXAMPLES_KEY = 'myExamples';
-
-  function loadMyExamples() {
-    const raw = localStorage.getItem(MY_EXAMPLES_KEY);
-    if (!raw) return [];
-    try { return JSON.parse(raw); } catch { return []; }
-  }
-
-  function saveMyExamples(arr) {
-    localStorage.setItem(MY_EXAMPLES_KEY, JSON.stringify(arr));
-  }
-
   function showExamplesModal() {
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -150,7 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
     function loadExample(fen) {
       if (state.isAnalyzing) return;
       try {
-        fenToBoard(fen);
+        loadFenIntoState(fen);
         renderPieces();
         updateStatus();
         document.getElementById('result-content').innerHTML = '';
@@ -202,7 +201,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function renderMyList() {
       list.innerHTML = '';
-      const items = loadMyExamples();
+      const items = loadExamples();
       for (let i = 0; i < items.length; i++) {
         const row = document.createElement('div');
         row.className = 'example-item';
@@ -225,9 +224,9 @@ document.addEventListener('DOMContentLoaded', () => {
         delBtn.textContent = '刪除';
         delBtn.addEventListener('click', () => {
           if (state.isAnalyzing) return;
-          const cur = loadMyExamples();
+          const cur = loadExamples();
           cur.splice(i, 1);
-          saveMyExamples(cur);
+          saveExamples(cur);
           renderMyList();
         });
 
@@ -270,14 +269,14 @@ document.addEventListener('DOMContentLoaded', () => {
       const f = fenInput.value.trim();
       if (!l || !f) { alert('請輸入名稱與 FEN'); return; }
       try {
-        fenToBoard(f);
+        loadFenIntoState(f);
       } catch (e) {
         alert('FEN格式錯誤：' + e.message);
         return;
       }
-      const cur = loadMyExamples();
+      const cur = loadExamples();
       cur.push({ label: l, fen: f });
-      saveMyExamples(cur);
+      saveExamples(cur);
       labelInput.value = '';
       fenInput.value = '';
       renderMyList();

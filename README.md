@@ -25,6 +25,11 @@
 - 棋盤使用 SVG 繪製
 - 完整的象棋規則引擎（所有七種棋子、王見王、困斃）
 - Iterative-deepening alpha-beta 搜尋（可調深度，15 秒時間限制）
-- Incremental make/unmake moves（全域棋盤狀態，無拷貝）
+- Incremental make/unmake moves（由搜尋 context 管理的可回復棋盤，不依賴全域引擎棋盤）
+- 搜尋與變著樹共用同一個總 deadline；中斷或逾時只提交完整的 iterative-deepening 深度
 - 疊代加深 refutation 搜尋：從 depth 2 開始逐步加深，找到殺棋即停
 - 變著樹利用 refutation PV 建構深層子樹，非必勝分枝自動跳過
+
+## 測試
+
+使用 `node --test` 執行 `test/` 下的規則、FEN、hash 與搜尋測試；使用 `node bench.mjs <fen> [depth] [timeLimitMs]` 進行 headless benchmark。
