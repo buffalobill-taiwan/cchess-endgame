@@ -34,3 +34,14 @@ test('game-analyze builds the bundled continuous-check position', async () => {
   });
   assert.ok(Object.keys(result.table).length > 0);
 });
+
+test('game-analyze reuses alpha-beta refutations on a simple mate puzzle', async () => {
+  const fen = '4k4/9/9/6N2/9/4C4/9/4p4/3p1p3/4K4 w - - 0 1';
+  const { stdout } = await run(process.execPath, [
+    tool.pathname, '--name', 'simple', '--fen', fen, '--depth', '64', '--time-limit', '5000',
+  ]);
+  const result = JSON.parse(stdout);
+  assert.equal(result.meta.step, 1);
+  assert.equal(result.meta.init, fen.split(' ')[0]);
+  assert.ok(Object.keys(result.table).length > 0);
+});

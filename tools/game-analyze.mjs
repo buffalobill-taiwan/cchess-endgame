@@ -4,8 +4,10 @@
 // ═══════════════════════════════════════════
 
 import { parseFen, boardToFen } from '../js/notation.js';
+import { MATE_VAL } from '../js/constants.js';
 import { applyBoardCopy, findKings } from '../js/board.js';
 import { generateLegalMoves, isInCheck } from '../js/rules.js';
+import { findRefutation } from '../js/search.js';
 
 const DEFAULT_DEPTH = 64;
 const DEFAULT_TIME_LIMIT = 15000;
@@ -117,7 +119,7 @@ class Solver {
     return depth < this.maxDepth;
   }
 
-  solve(board, side, path, depth) {
+  async solve(board, side, path, depth) {
     this.nodes++;
     const terminal = terminalResult(board, side);
     if (terminal) return { ...terminal, choice: null };
@@ -146,6 +148,28 @@ class Solver {
     const cached = this.memo.get(key);
     if (cached) return cached;
 
+    // Reuse the browser engine's alpha-beta mate proof for black refutations.
+    // This avoids exhaustively enumerating every red continuation after a
+    // blunder when black already has a forced mate.
+    if (side === 'black') {
+      const refDepth = Math.min(12, this.maxDepth - depth);
+      const refTime = Math.min(500, Math.max(1, this.deadline - Date.now()));
+      if (refDepth >= 2 && refTime > 0) {
+        const ref = await findRefutation(board, 'black', refDepth, Date.now(), refTime, {
+          deadline: this.deadline,
+        });
+        if (!ref.interrupted && ref.move && ref.score < -MATE_VAL / 2) {
+          const result = {
+            outcome: 'blackWin', plies: Math.max(1, ref.pv.length),
+            redSteps: Math.floor(ref.pv.length / 2), qualified: false, choice: ref.move,
+          };
+          this.memo.set(key, result);
+          this.policy.set(key, ref.move);
+          return result;
+        }
+      }
+    }
+
     this.active.add(key);
     const nextPath = new Set(path);
     nextPath.add(key);
@@ -166,7 +190,7 @@ class Solver {
           return result;
         }
       }
-      const child = this.solve(nextBoard, side === 'red' ? 'black' : 'red', nextPath, depth + 1);
+      const child = await this.solve(nextBoard, side === 'red' ? 'black' : 'red', nextPath, depth + 1);
       const item = { move, board: nextBoard, child, check: side === 'red' && moveGivesCheck(board, move) };
       children.push(item);
 
@@ -291,12 +315,12 @@ class Solver {
   }
 }
 
-function buildTable(board, solver, deadline, maxDepth) {
+async function buildTable(board, solver, deadline, maxDepth) {
   const table = {};
   const path = new Set([stateKey(board, 'red')]);
   const visited = new Set();
 
-  function visit(redBoard, depth, currentPath) {
+  async function visit(redBoard, depth, currentPath) {
     if (Date.now() >= deadline) throw new AnalysisFailure('分析逾時');
     if (depth >= maxDepth) throw new AnalysisFailure(`超過最大搜尋深度 ${maxDepth}`);
     const visitKey = boardKey(redBoard);
@@ -318,7 +342,7 @@ function buildTable(board, solver, deadline, maxDepth) {
         terminalResult(applyBoardCopy(afterRed, move), 'red')?.outcome === 'blackWin');
       const blackResult = immediateMove
         ? { outcome: 'blackWin', plies: 1, redSteps: 0, qualified: false, choice: immediateMove }
-        : solver.solve(afterRed, 'black', currentPath, depth + 1);
+        : await solver.solve(afterRed, 'black', currentPath, depth + 1);
       if (!['redWin', 'blackWin', 'cycle'].includes(blackResult.outcome) || !blackResult.choice) {
         throw new AnalysisFailure('存在無法證明勝負的分枝');
       }
@@ -335,25 +359,25 @@ function buildTable(board, solver, deadline, maxDepth) {
       if (currentPath.has(nextKey)) continue;
       const nextPath = new Set(currentPath);
       nextPath.add(nextKey);
-      visit(afterBlack, depth + 2, nextPath);
+      await visit(afterBlack, depth + 2, nextPath);
     }
   }
 
-  visit(board, 0, path);
+  await visit(board, 0, path);
   return table;
 }
 
-function analyze(args) {
+async function analyze(args) {
   const parsed = parseFen(args.fen, { allowMissingKings: false });
   if (parsed.sideToMove !== 'w') throw new AnalysisFailure('初始 FEN 必須由紅方 w 行棋');
   const board = parsed.board;
   const deadline = Date.now() + args.timeLimit;
   const solver = new Solver({ deadline, maxDepth: args.depth });
-  const root = solver.solve(board, 'red', new Set(), 0);
+  const root = await solver.solve(board, 'red', new Set(), 0);
   if (root.outcome !== 'redWin' || !root.qualified) {
     throw new AnalysisFailure('初始局面不符合合格連將殺條件');
   }
-  const table = buildTable(board, solver, deadline, args.depth);
+  const table = await buildTable(board, solver, deadline, args.depth);
   return {
     meta: { name: args.name, step: root.redSteps, init: boardKey(board) },
     table,
@@ -362,7 +386,7 @@ function analyze(args) {
 
 try {
   const args = parseArgs(process.argv.slice(2));
-  const result = analyze(args);
+  const result = await analyze(args);
   console.log(JSON.stringify(result, null, args.pretty ? 2 : 0));
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
