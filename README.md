@@ -36,6 +36,21 @@
 
 使用 `node --test` 執行 `test/` 下的規則、FEN、hash 與搜尋測試；使用 `node bench.mjs <fen> [depth] [timeLimitMs]` 進行 headless benchmark。
 
+### 連將殺題目產生器
+
+`tools/game-analyze.mjs` 會把完整 FEN 分析成可供其他專案使用的連將殺題目表。紅方所有合法走法都會納入，黑方則只保留最佳應手；若無法證明所有分枝最後為紅勝或黑勝，工具會以錯誤結束而不輸出部分 JSON。
+
+```bash
+node tools/game-analyze.mjs \
+  --name "題目名" \
+  --fen "<完整 FEN>" \
+  --depth 64 \
+  --time-limit 15000 \
+  --pretty
+```
+
+輸出包含 `meta.name`、最短紅勝步數 `meta.step`、初始棋盤欄位 `meta.init`，以及紅方棋盤欄位到黑方最佳回應棋盤欄位的 `table`。
+
 瀏覽器手動驗收建議：
 
 - 從調色盤拖曳棋子到合法與非法位置，確認合法位置提示與棋子數量。
