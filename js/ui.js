@@ -2,9 +2,11 @@
 // SVG BOARD + UI (rendering, palette, drag-and-drop)
 // ═══════════════════════════════════════════
 
-import { W, H, PAD, CELL, ROWS, COLS, CHARS, TYPES, MATE_VAL } from './constants.js';
-import { state, opp, inPalace } from './state.js';
-import { isInCheck } from './rules.js';
+import { ROWS, COLS, CHARS, TYPES, MATE_VAL } from './constants.js';
+import { state } from './state.js';
+import { opp } from './geometry.js';
+import { W, H, PAD, CELL } from './ui-constants.js';
+import { isInCheck, canPlaceAt } from './rules.js';
 import { boardToFen } from './notation.js';
 import { findKings } from './board.js';
 
@@ -138,26 +140,6 @@ function handlePaletteDrop(e) {
   }
 }
 
-function canPlaceAt(row, col, type, color) {
-  if (type === 'king') return inPalace(row, col, color);
-  if (type === 'advisor') {
-    const pos = color === 'red'
-      ? [[7,3],[7,5],[8,4],[9,3],[9,5]]
-      : [[0,3],[0,5],[1,4],[2,3],[2,5]];
-    return pos.some(([r,c]) => r===row && c===col);
-  }
-  if (type === 'elephant') {
-    const pos = color === 'red'
-      ? [[5,2],[5,6],[7,0],[7,4],[7,8],[9,2],[9,6]]
-      : [[0,2],[0,6],[2,0],[2,4],[2,8],[4,2],[4,6]];
-    return pos.some(([r,c]) => r===row && c===col);
-  }
-  if (type === 'soldier') {
-    if (color === 'red' && row >= 5) return (row===5||row===6) && col%2===0;
-    if (color === 'black' && row <= 4) return (row===3||row===4) && col%2===0;
-  }
-  return true;
-}
 
 function placePiece(row, col, type, color) {
   if (!canPlaceAt(row, col, type, color)) return;

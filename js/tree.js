@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 
 import { MATE_VAL, REFUTATION_TIME_LIMIT, MIN_REF_DEPTH } from './constants.js';
-import { opp, movesEqual } from './state.js';
+import { opp, movesEqual } from './geometry.js';
 import { isInCheck, generateLegalMoves, terminalState } from './rules.js';
 import { deepCopyBoard, applyBoardCopy } from './board.js';
 import { moveToNotation } from './notation.js';

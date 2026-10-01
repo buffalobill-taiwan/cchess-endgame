@@ -11,3 +11,5 @@
 - Click a result tree node to restore board to that position; drag a piece off the board (to palette area) to remove it
 - Drag-and-drop is mouse-only (pointer events); 行動裝置/touch 不在考量範圍，不需處理 touch 事件或行動版布局
 - Tests: `node --test` runs the unit/integration suites in `test/` (`test/*.test.mjs`, node:test, auto-discovered; require Node 22+). Benchmark: `node bench.mjs <fen> [depth] [timeLimitMs]` prints score/nodes/ms/NPS/PV. No build tools or package manager beyond that.
+
+- Shared public API: `js/engine.js`; core modules must never import browser adapters (`state.js`, `ui.js`, `ui-constants.js`, `app.js`, example modules). Pure geometry helpers live in `geometry.js`; position editor constraints `canPlaceAt` live in `rules.js`. Browser dimensions live in `ui-constants.js`.

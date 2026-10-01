@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 
 import { MATE_VAL, ROOT_TIME_LIMIT, MIN_REF_DEPTH } from './constants.js';
-import { movesEqual } from './state.js';
+import { movesEqual } from './geometry.js';
 import { isCheckmate, isStalemate, generateLegalMoves, terminalState } from './rules.js';
 import { moveToNotation } from './notation.js';
 import { searchRootAsync } from './search.js';

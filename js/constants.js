@@ -1,6 +1,4 @@
-export const ROWS = 10, COLS = 9, CELL = 54, PAD = 30;
-export const W = PAD * 2 + (COLS - 1) * CELL;
-export const H = PAD * 2 + (ROWS - 1) * CELL;
+export const ROWS = 10, COLS = 9;
 
 export const CHARS = {
   red:   { king:'帥', advisor:'仕', elephant:'相', horse:'傌', chariot:'俥', cannon:'炮', soldier:'兵' },

@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 
 import { ROWS, COLS } from './constants.js';
-import { opp, inPalace, onOwnSide } from './state.js';
+import { opp, inPalace, onOwnSide } from './geometry.js';
 import { findKings } from './board.js';
 import { PIECE_INDEX, ZOBRIST_PIECE_LO, ZOBRIST_PIECE_HI, ZOBRIST_SIDE_LO, ZOBRIST_SIDE_HI } from './zobrist.js';
 
@@ -327,4 +327,26 @@ export function unmakeMove(b, move, undo, hash) {
   }
   b[move.from.row][move.from.col] = undo.moved;
   b[move.to.row][move.to.col] = undo.captured;
+}
+
+// Position editor constraints (distinct from legal moves during play).
+export function canPlaceAt(row, col, type, color) {
+  if (type === 'king') return inPalace(row, col, color);
+  if (type === 'advisor') {
+    const pos = color === 'red'
+      ? [[7,3],[7,5],[8,4],[9,3],[9,5]]
+      : [[0,3],[0,5],[1,4],[2,3],[2,5]];
+    return pos.some(([r,c]) => r===row && c===col);
+  }
+  if (type === 'elephant') {
+    const pos = color === 'red'
+      ? [[5,2],[5,6],[7,0],[7,4],[7,8],[9,2],[9,6]]
+      : [[0,2],[0,6],[2,0],[2,4],[2,8],[4,2],[4,6]];
+    return pos.some(([r,c]) => r===row && c===col);
+  }
+  if (type === 'soldier') {
+    if (color === 'red' && row >= 5) return (row===5||row===6) && col%2===0;
+    if (color === 'black' && row <= 4) return (row===3||row===4) && col%2===0;
+  }
+  return true;
 }

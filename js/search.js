@@ -3,7 +3,7 @@
 // ═══════════════════════════════════════════
 
 import { ROWS, COLS, PIECE_VALUES, MATE_VAL, INF, TT_SIZE, TT_MASK } from './constants.js';
-import { opp, movesEqual } from './state.js';
+import { opp, movesEqual } from './geometry.js';
 import { isInCheck, generateLegalMoves, generateCaptureMoves, makeMove, unmakeMove } from './rules.js';
 import { zobristFromBoard } from './zobrist.js';
 import { pieceInfo } from './board.js';

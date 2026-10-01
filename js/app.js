@@ -4,9 +4,7 @@
 
 import { MAX_DEPTH, DEFAULT_DEPTH } from './constants.js';
 import { state, initBoard } from './state.js';
-import { parseFen } from './notation.js';
-import { deepCopyBoard } from './board.js';
-import { analyzePosition } from './analyze.js';
+import { parseFen, deepCopyBoard, analyzePosition } from './engine.js';
 import { renderBoard, renderPalette, setupDragDrop, updateStatus, renderPieces, showResult } from './ui.js';
 import { setupExamplesButton } from './example-modal.js';
 

@@ -3,9 +3,7 @@
 // usage: node bench.mjs <fen> [depth] [timeLimitMs]
 // ═══════════════════════════════════════════
 
-import { parseFen, moveToNotation } from './js/notation.js';
-import { deepCopyBoard, applyBoardCopy } from './js/board.js';
-import { searchRootAsync } from './js/search.js';
+import { parseFen, moveToNotation, deepCopyBoard, applyBoardCopy, searchRootAsync } from './js/engine.js';
 
 const fen = process.argv[2];
 const depth = parseInt(process.argv[3] || '6', 10);

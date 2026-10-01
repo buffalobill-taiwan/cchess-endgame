@@ -32,6 +32,41 @@
 - 疊代加深 refutation 搜尋：從 depth 2 開始逐步加深，找到殺棋即停
 - 變著樹利用 refutation PV 建構深層子樹，非必勝分枝自動跳過
 
+## 終端機／其他前端引用
+
+共用入口為 `js/engine.js`（ES module；Node 22+），不會載入 DOM、localStorage 或網頁的全域 `state`。可直接引用本專案路徑，無需建置或安裝套件：
+
+```js
+import { parseFen, analyzePosition, generateLegalMoves, applyBoardCopy,
+  boardToFen } from './cchess-endgame/js/engine.js';
+
+const { board, sideToMove } = parseFen(fen);
+if (sideToMove !== 'w') throw new Error('分析固定由紅方開始');
+const result = await analyzePosition(board, {
+  depth: 12, // 半回合（plies），相當於網頁滑桿 6 步
+  timeLimit: 15000, // 毫秒，包含搜尋與變著樹建構
+  continuousCheck: false,
+  isCancelled: () => false, // 終端機可接自己的取消旗標
+});
+console.log(result);
+
+const moves = generateLegalMoves(board, 'red');
+if (moves.length) console.log(boardToFen(applyBoardCopy(board, moves[0]), 'b'));
+```
+
+棋盤是 10 × 9 的陣列，`board[row][col]` 為 `null` 或 `{ type, color }`；row 0 是黑方底線，row 9 是紅方底線。`color` 為 `red`／`black`，棋種為 `king`、`advisor`、`elephant`、`horse`、`chariot`、`cannon`、`soldier`。走法為 `{ from: { row, col }, to: { row, col } }`。
+
+`parseFen` 回傳 `{ board, sideToMove }`，sideToMove 為 `w`／`b`；規則與走法生成支援雙方，但 `analyzePosition` 與 `searchRootAsync` 固定搜尋紅方。FEN 解析預設允許缺將帥，可用 `{ allowMissingKings: false }` 嚴格檢查。
+
+`analyzePosition` 不修改輸入棋盤，回傳 `{ status, tree, score, interrupted }`。status 為 `ok`、`noKing`、`redMated` 或 `redStalemated`；中斷／逾時時 tree 為 null。樹節點提供 move、notation、color、isMate、isStalemate、children 與 board，顯示方式由呼叫端決定。`applyBoardCopy` 回傳新棋盤；低階 `makeMove`／`unmakeMove` 會原地修改棋盤，呼叫端需自行配對還原。
+
+分層邊界：
+
+- 核心：`engine.js`、`constants.js`、`geometry.js`、`board.js`、`rules.js`、`notation.js`、`zobrist.js`、`search.js`、`tree.js`、`analyze.js`。`canPlaceAt` 是共用擺棋限制，實際對弈請使用 `generateLegalMoves`。
+- 瀏覽器介面：`app.js`、`ui.js`、`ui-constants.js`、`state.js`、`example-modal.js`、`example-store.js`。管理畫面、拖曳、網頁工作階段與範例儲存；核心不引用這些模組。
+
+每個呼叫端自行持有棋盤與取消旗標，不需初始化網頁狀態。測試會遞迴檢查核心依賴，防止重新引入瀏覽器模組。
+
 ## 測試
 
 使用 `node --test` 執行 `test/` 下的規則、FEN、hash 與搜尋測試；使用 `node bench.mjs <fen> [depth] [timeLimitMs]` 進行 headless benchmark。
