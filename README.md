@@ -73,18 +73,18 @@ if (moves.length) console.log(boardToFen(applyBoardCopy(board, moves[0]), 'b'));
 
 ### 連將殺題目產生器
 
-`tools/game-analyze.mjs` 會把完整 FEN 分析成可供其他專案使用的連將殺題目表。紅方所有合法走法都會納入，黑方則只保留最佳應手；若無法證明所有分枝最後為紅勝或黑勝，工具會以錯誤結束而不輸出部分 JSON。
+`tools/game-analyze.mjs` 會從完整 FEN 建立所有可達紅方局面的應手表。紅方所有合法走法都會納入；黑方若有一步能回到已知紅方局面，就優先選擇該步，讓紅方長捉時黑方陪著重複，否則由引擎選應手。新到達的紅方局面會繼續整理。重複局面只記錄一次。工具不判定整盤勝負；若在時間上限內無法整理完整張表，會以錯誤結束且不輸出部分 JSON。
 
 ```bash
 node tools/game-analyze.mjs \
   --name "題目名" \
   --fen "<完整 FEN>" \
   --depth 64 \
-  --time-limit 15000 \
+  --time-limit 60000 \
   --pretty
 ```
 
-輸出包含 `meta.name`、最短紅勝步數 `meta.step`、初始棋盤欄位 `meta.init`，以及紅方棋盤欄位到黑方最佳回應棋盤欄位的 `table`。
+輸出包含 `meta.name`、最佳對弈下紅方取勝的紅方步數 `meta.step`、初始棋盤欄位 `meta.init`，以及紅方走完後的棋盤欄位到黑方應手後棋盤欄位的 `table`。若引擎搜尋未找到紅方必勝，`meta.step` 為 `null`。紅方已獲勝或黑方無合法應手的局面以 `null` 表示。`--depth` 控制引擎搜尋深度；`--time-limit` 限制步數分析與整張表的建置時間。
 
 瀏覽器手動驗收建議：
 

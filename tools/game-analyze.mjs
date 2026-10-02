@@ -1,16 +1,14 @@
-// ═══════════════════════════════════════════
-// CONTINUOUS-CHECK GAME ANALYZER
+// Build a complete table of black responses for every reachable red position.
 // usage: node tools/game-analyze.mjs --name <name> --fen <fen> [--depth N] [--time-limit MS] [--pretty]
-// ═══════════════════════════════════════════
 
 import { parseFen, boardToFen } from '../js/notation.js';
 import { MATE_VAL } from '../js/constants.js';
 import { applyBoardCopy, findKings } from '../js/board.js';
 import { generateLegalMoves, isInCheck } from '../js/rules.js';
-import { findRefutation } from '../js/search.js';
+import { findRefutation, searchRootAsync } from '../js/search.js';
 
 const DEFAULT_DEPTH = 64;
-const DEFAULT_TIME_LIMIT = 15000;
+const DEFAULT_TIME_LIMIT = 60000;
 
 class AnalysisFailure extends Error {}
 
@@ -19,7 +17,7 @@ function parseArgs(argv) {
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === '--pretty') { args.pretty = true; continue; }
-    if (arg === '--name' || arg === '--fen' || arg === '--depth' || arg === '--time-limit') {
+    if (['--name', '--fen', '--depth', '--time-limit'].includes(arg)) {
       const value = argv[++i];
       if (!value) throw new AnalysisFailure(`${arg} 缺少參數`);
       if (arg === '--name') args.name = value;
@@ -46,10 +44,6 @@ function boardKey(board) {
   return boardToFen(board, 'w').split(' ')[0];
 }
 
-function stateKey(board, side) {
-  return `${side}:${boardKey(board)}`;
-}
-
 function moveGivesCheck(board, move) {
   return isInCheck(applyBoardCopy(board, move), 'black');
 }
@@ -72,316 +66,91 @@ function orderedMoves(board, side) {
   });
 }
 
-function terminalResult(board, sideToMove) {
+function isTerminal(board, sideToMove) {
   const { red, black } = findKings(board);
-  if (!red) return { outcome: 'blackWin', plies: 0, redSteps: 0, qualified: false };
-  if (!black) return { outcome: 'redWin', plies: 0, redSteps: 0, qualified: true };
-
-  const moves = orderedMoves(board, sideToMove);
-  if (moves.length === 0) {
-    return sideToMove === 'red'
-      ? { outcome: 'blackWin', plies: 0, redSteps: 0, qualified: false }
-      : { outcome: 'redWin', plies: 0, redSteps: 0, qualified: true };
-  }
-  return null;
+  if (!red || !black) return true;
+  return orderedMoves(board, sideToMove).length === 0;
 }
 
-function compareMin(a, b, field) {
-  return a[field] < b[field] ? a : b;
+async function chooseBlackMove(board, moves, knownRedPositions, args, deadline) {
+  if (moves.length === 0) return null;
+  const moveToKnownPosition = moves.find(move =>
+    knownRedPositions.has(boardKey(applyBoardCopy(board, move))));
+  if (moveToKnownPosition) return moveToKnownPosition;
+
+  const remaining = deadline - Date.now();
+  if (remaining <= 0) throw new AnalysisFailure('分析逾時');
+  const depth = Math.min(12, args.depth);
+  if (depth >= 2) {
+    const result = await findRefutation(board, 'black', depth, Date.now(), Math.min(500, remaining), { deadline });
+    if (result.move) {
+      // A proven mate is the preferred defense. Otherwise use the engine's
+      // best available move at its completed search depth.
+      if (result.score < -MATE_VAL / 2 || !result.interrupted) return result.move;
+    }
+  }
+  if (Date.now() >= deadline) throw new AnalysisFailure('分析逾時');
+  return moves[0];
 }
 
-function compareMax(a, b, field) {
-  return a[field] > b[field] ? a : b;
-}
-
-function compareChildMin(a, b, field) {
-  return a.child[field] < b.child[field] ? a : b;
-}
-
-function compareChildMax(a, b, field) {
-  return a.child[field] > b.child[field] ? a : b;
-}
-
-class Solver {
-  constructor({ deadline, maxDepth }) {
-    this.deadline = deadline;
-    this.maxDepth = maxDepth;
-    this.memo = new Map();
-    this.policy = new Map();
-    this.active = new Set();
-    this.nodes = 0;
-  }
-
-  checkBudget(depth) {
-    if (Date.now() >= this.deadline) {
-      throw new AnalysisFailure(`分析逾時（nodes=${this.nodes}, memo=${this.memo.size}）`);
-    }
-    return depth < this.maxDepth;
-  }
-
-  async solve(board, side, path, depth) {
-    this.nodes++;
-    const terminal = terminalResult(board, side);
-    if (terminal) return { ...terminal, choice: null };
-
-    const key = stateKey(board, side);
-    // A repeated state is a graph edge, not an analysis error. Keep a
-    // deterministic black response so the exported table can represent the
-    // cycle without recursing forever.
-    if (path.has(key)) {
-      const moves = orderedMoves(board, side);
-      return {
-        outcome: 'cycle', plies: 0, redSteps: 0, qualified: false,
-        choice: side === 'black' ? (this.policy.get(key) ?? moves[0] ?? null) : null,
-      };
-    }
-    if (this.active.has(key)) {
-      const moves = orderedMoves(board, side);
-      return {
-        outcome: 'cycle', plies: 0, redSteps: 0, qualified: false,
-        choice: side === 'black' ? (this.policy.get(key) ?? moves[0] ?? null) : null,
-      };
-    }
-    if (!this.checkBudget(depth)) {
-      return { outcome: 'unknown', plies: 0, redSteps: 0, qualified: false, choice: null };
-    }
-    const cached = this.memo.get(key);
-    if (cached) return cached;
-
-    // Reuse the browser engine's alpha-beta mate proof for black refutations.
-    // This avoids exhaustively enumerating every red continuation after a
-    // blunder when black already has a forced mate.
-    if (side === 'black') {
-      const refDepth = Math.min(12, this.maxDepth - depth);
-      const refTime = Math.min(500, Math.max(1, this.deadline - Date.now()));
-      if (refDepth >= 2 && refTime > 0) {
-        const ref = await findRefutation(board, 'black', refDepth, Date.now(), refTime, {
-          deadline: this.deadline,
-        });
-        if (!ref.interrupted && ref.move && ref.score < -MATE_VAL / 2) {
-          const result = {
-            outcome: 'blackWin', plies: Math.max(1, ref.pv.length),
-            redSteps: Math.floor(ref.pv.length / 2), qualified: false, choice: ref.move,
-          };
-          this.memo.set(key, result);
-          this.policy.set(key, ref.move);
-          return result;
-        }
-      }
-    }
-
-    this.active.add(key);
-    const nextPath = new Set(path);
-    nextPath.add(key);
-    const moves = orderedMoves(board, side);
-    const children = [];
-    for (const move of moves) {
-      const nextBoard = applyBoardCopy(board, move);
-      if (side === 'black') {
-        const immediate = terminalResult(nextBoard, 'red');
-        if (immediate?.outcome === 'blackWin') {
-          const result = {
-            outcome: 'blackWin', plies: 1, redSteps: 0,
-            qualified: false, choice: move,
-          };
-          this.active.delete(key);
-          this.memo.set(key, result);
-          this.policy.set(key, move);
-          return result;
-        }
-      }
-      const child = await this.solve(nextBoard, side === 'red' ? 'black' : 'red', nextPath, depth + 1);
-      const item = { move, board: nextBoard, child, check: side === 'red' && moveGivesCheck(board, move) };
-      children.push(item);
-
-      // For a black node, any proven black win is sufficient to establish
-      // the minimax result. Move ordering puts captures first; an immediate
-      // mate is handled above, so this avoids expanding unrelated branches.
-      if (side === 'black' && child.outcome === 'blackWin') {
-        const result = {
-          outcome: 'blackWin', plies: child.plies + 1,
-          redSteps: child.redSteps, qualified: false, choice: move,
-        };
-        this.active.delete(key);
-        this.memo.set(key, result);
-        this.policy.set(key, move);
-        return result;
-      }
-
-      // Red only needs one fully qualified checking win to establish the
-      // puzzle's winning line. Other red moves are expanded later by the
-      // table builder, where they are recorded as player alternatives.
-      if (side === 'red' && item.check && child.outcome === 'redWin' && child.qualified) {
-        const result = this.solveRed(children);
-        this.active.delete(key);
-        this.memo.set(key, result);
-        return result;
-      }
-    }
-    this.active.delete(key);
-
-    const result = side === 'red'
-      ? this.solveRed(children)
-      : this.solveBlack(children);
-    this.memo.set(key, result);
-    if (side === 'black' && result.choice) this.policy.set(key, result.choice);
-    return result;
-  }
-
-  solveRed(children) {
-    const redWins = children.filter(item => item.child.outcome === 'redWin');
-    const blackWins = children.filter(item => item.child.outcome === 'blackWin');
-    const cycles = children.filter(item => item.child.outcome === 'cycle');
-    const unknowns = children.filter(item => item.child.outcome === 'unknown');
-
-    let outcome;
-    let candidates;
-    if (redWins.length > 0) {
-      outcome = 'redWin';
-      candidates = redWins;
-    } else if (blackWins.length === children.length) {
-      outcome = 'blackWin';
-      candidates = blackWins;
-    } else if (cycles.length > 0) {
-      outcome = 'cycle';
-      candidates = cycles;
-    } else if (unknowns.length > 0) {
-      outcome = 'unknown';
-      candidates = unknowns;
-    } else {
-      outcome = 'draw';
-      candidates = [];
-    }
-
-    if (outcome === 'redWin') {
-      const qualifiedWins = redWins.filter(item => item.check && item.child.qualified);
-      const qualified = qualifiedWins.length > 0;
-      const chosen = qualifiedWins.length > 0
-        ? qualifiedWins.reduce((best, item) => compareChildMin(best, item, 'redSteps'))
-        : redWins.reduce((best, item) => compareChildMin(best, item, 'redSteps'));
-      return {
-        outcome, plies: chosen.child.plies + 1, redSteps: chosen.child.redSteps + 1,
-        qualified, choice: null,
-      };
-    }
-    if (outcome === 'blackWin') {
-      const chosen = candidates.reduce((best, item) => compareChildMax(best, item, 'plies'));
-      return {
-        outcome, plies: chosen.child.plies + 1, redSteps: chosen.child.redSteps + 1,
-        qualified: false, choice: null,
-      };
-    }
-    if (outcome === 'cycle') {
-      return {
-        outcome, plies: 0, redSteps: 0, qualified: false, choice: null,
-      };
-    }
-    if (outcome === 'unknown') {
-      return { outcome, plies: 0, redSteps: 0, qualified: false, choice: null };
-    }
-    return { outcome, plies: 0, redSteps: 0, qualified: false, choice: null };
-  }
-
-  solveBlack(children) {
-    const blackWins = children.filter(item => item.child.outcome === 'blackWin');
-    const redWins = children.filter(item => item.child.outcome === 'redWin');
-    const cycles = children.filter(item => item.child.outcome === 'cycle');
-    const unknowns = children.filter(item => item.child.outcome === 'unknown');
-    let chosen;
-    let outcome;
-    if (blackWins.length > 0) {
-      outcome = 'blackWin';
-      chosen = blackWins.reduce((best, item) => compareChildMin(best, item, 'plies'));
-    } else if (cycles.length > 0) {
-      outcome = 'cycle';
-      chosen = cycles[0];
-    } else if (redWins.length === children.length) {
-      outcome = 'redWin';
-      chosen = redWins.reduce((best, item) => compareChildMax(best, item, 'plies'));
-    } else if (unknowns.length > 0) {
-      outcome = 'unknown';
-      chosen = unknowns[0];
-    } else {
-      outcome = 'draw';
-      chosen = children.find(item => !['redWin', 'blackWin'].includes(item.child.outcome)) ?? children[0];
-    }
-    return {
-      outcome,
-      plies: chosen.child.plies + 1,
-      redSteps: chosen.child.redSteps,
-      qualified: outcome === 'redWin' && chosen.child.qualified,
-      choice: chosen.move,
-    };
-  }
-}
-
-async function buildTable(board, solver, deadline, maxDepth) {
-  const table = {};
-  const path = new Set([stateKey(board, 'red')]);
+async function buildTable(board, args, deadline) {
+  const table = Object.create(null);
+  const pending = [board];
   const visited = new Set();
+  const knownRedPositions = new Set([boardKey(board)]);
 
-  async function visit(redBoard, depth, currentPath) {
-    if (Date.now() >= deadline) throw new AnalysisFailure('分析逾時');
-    if (depth >= maxDepth) throw new AnalysisFailure(`超過最大搜尋深度 ${maxDepth}`);
-    const visitKey = boardKey(redBoard);
-    if (visited.has(visitKey)) return;
-    visited.add(visitKey);
+  while (pending.length > 0) {
+    if (Date.now() >= deadline) throw new AnalysisFailure(`分析逾時（已整理 ${visited.size} 個紅方局面）`);
+    const redBoard = pending.pop();
+    const redFen = boardKey(redBoard);
+    if (visited.has(redFen)) continue;
+    visited.add(redFen);
 
     for (const redMove of orderedMoves(redBoard, 'red')) {
+      if (Date.now() >= deadline) throw new AnalysisFailure(`分析逾時（已整理 ${visited.size} 個紅方局面）`);
       const afterRed = applyBoardCopy(redBoard, redMove);
-      const redFen = boardKey(afterRed);
-      const redTerminal = terminalResult(afterRed, 'black');
-      if (redTerminal?.outcome === 'redWin') {
-        table[redFen] = null;
+      const afterRedFen = boardKey(afterRed);
+      if (isTerminal(afterRed, 'black')) {
+        table[afterRedFen] = null;
         continue;
       }
 
-      const childKey = stateKey(afterRed, 'black');
       const blackMoves = orderedMoves(afterRed, 'black');
-      const immediateMove = blackMoves.find(move =>
-        terminalResult(applyBoardCopy(afterRed, move), 'red')?.outcome === 'blackWin');
-      const blackResult = immediateMove
-        ? { outcome: 'blackWin', plies: 1, redSteps: 0, qualified: false, choice: immediateMove }
-        : await solver.solve(afterRed, 'black', currentPath, depth + 1);
-      if (!['redWin', 'blackWin', 'cycle'].includes(blackResult.outcome) || !blackResult.choice) {
-        throw new AnalysisFailure('存在無法證明勝負的分枝');
+      const blackMove = await chooseBlackMove(afterRed, blackMoves, knownRedPositions, args, deadline);
+      if (!blackMove) {
+        table[afterRedFen] = null;
+        continue;
       }
-      const afterBlack = applyBoardCopy(afterRed, blackResult.choice);
-      const blackFen = boardKey(afterBlack);
-      if (table[redFen] !== undefined && table[redFen] !== blackFen) {
-        throw new AnalysisFailure('同一紅方局面出現不同黑方應手');
-      }
-      table[redFen] = blackFen;
+      const afterBlack = applyBoardCopy(afterRed, blackMove);
+      table[afterRedFen] = boardKey(afterBlack);
 
-      const afterBlackTerminal = terminalResult(afterBlack, 'red');
-      if (afterBlackTerminal) continue;
-      const nextKey = stateKey(afterBlack, 'red');
-      if (currentPath.has(nextKey)) continue;
-      const nextPath = new Set(currentPath);
-      nextPath.add(nextKey);
-      await visit(afterBlack, depth + 2, nextPath);
+      if (!isTerminal(afterBlack, 'red')) {
+        const nextFen = boardKey(afterBlack);
+        if (!knownRedPositions.has(nextFen)) {
+          knownRedPositions.add(nextFen);
+          pending.push(afterBlack);
+        }
+      }
     }
   }
-
-  await visit(board, 0, path);
   return table;
 }
 
 async function analyze(args) {
   const parsed = parseFen(args.fen, { allowMissingKings: false });
   if (parsed.sideToMove !== 'w') throw new AnalysisFailure('初始 FEN 必須由紅方 w 行棋');
-  const board = parsed.board;
   const deadline = Date.now() + args.timeLimit;
-  const solver = new Solver({ deadline, maxDepth: args.depth });
-  const root = await solver.solve(board, 'red', new Set(), 0);
-  if (root.outcome !== 'redWin' || !root.qualified) {
-    throw new AnalysisFailure('初始局面不符合合格連將殺條件');
-  }
-  const table = await buildTable(board, solver, deadline, args.depth);
-  return {
-    meta: { name: args.name, step: root.redSteps, init: boardKey(board) },
-    table,
-  };
+  // Keep the browser engine's red-to-move minimax result for metadata. This
+  // search does not limit table generation: every red move is still added.
+  const stepBudget = Math.min(15000, args.timeLimit);
+  const stepResult = await searchRootAsync(parsed.board, args.depth, stepBudget, {
+    deadline: Math.min(deadline, Date.now() + stepBudget),
+  });
+  const step = stepResult.score > MATE_VAL / 2 && stepResult.pv.length > 0
+    ? Math.ceil(stepResult.pv.length / 2)
+    : null;
+  const table = await buildTable(parsed.board, args, deadline);
+  return { meta: { name: args.name, step, init: boardKey(parsed.board) }, table };
 }
 
 try {
