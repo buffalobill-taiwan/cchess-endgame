@@ -6,22 +6,7 @@ const opposite = side => side === 'red' ? 'black' : 'red';
 const boardKey = board => boardToFen(board).split(' ')[0];
 export const GRAPH_LIMIT = 50000;
 
-// Conservative placement bound, including captures and both sides to move.
-// This decides which algorithm to use; it never truncates a proof.
-export function fitsGraph(board) {
-  let bound = 2;
-  for (let row = 0; row < board.length; row++) {
-    for (const piece of board[row]) {
-      if (!piece) continue;
-      const places = piece.type === 'king' ? 11 : piece.type === 'advisor' ? 7 :
-        piece.type === 'elephant' ? 17 : piece.type === 'soldier'
-          ? (piece.color === 'red' ? row + 1 : 10 - row) * 9 + 1 : 91;
-      bound *= places;
-      if (bound > GRAPH_LIMIT) return false;
-    }
-  }
-  return true;
-}
+export const GRAPH_EDGE_LIMIT = 400000;
 
 // Increasing distance is essential: the first winning child gives the fastest
 // win, while a loss is settled only after ALL children prove opponent wins.
@@ -110,47 +95,101 @@ export function resolveGraph(nodes, check = () => {}) {
 }
 
 export class RetrogradeSolver {
-  positions = new Map();
-  expanded = 0;
+  constructor(positions = new Map(), { maxNodes = GRAPH_LIMIT, maxEdges = GRAPH_EDGE_LIMIT } = {}) {
+    this.positions = positions;
+    this.maxNodes = maxNodes;
+    this.maxEdges = maxEdges;
+    this.frontier = new Map();
+    this.frontierEdges = 0;
+    this.expanded = 0;
+    this.lastProbe = null;
+  }
 
-  solve(board, side, check) {
+  remember(key, record) {
+    this.frontier.set(key, record);
+    this.frontierEdges += record.edges.length;
+    while (this.frontier.size > this.maxNodes || this.frontierEdges > this.maxEdges) {
+      const oldest = this.frontier.keys().next().value;
+      this.frontierEdges -= this.frontier.get(oldest).edges.length;
+      this.frontier.delete(oldest);
+    }
+  }
+
+  solve(board, side, check, expansionBudget = Infinity) {
     const rootFen = boardKey(board), rootKey = `${side}:${rootFen}`;
     check();
     if (this.positions.has(rootKey)) return this.positions.get(rootKey);
     const graph = new Map(), pending = [];
+    let edges = 0, processed = 0, expanded = 0;
+    const stop = reason => {
+      this.lastProbe = { reason, states: graph.size, processed, expanded, edges };
+      return null;
+    };
     const discover = (fen, turn) => {
       const key = `${turn}:${fen}`;
       if (graph.has(key)) return graph.get(key);
+      if (graph.size >= this.maxNodes) throw NODE_LIMIT;
       const cached = this.positions.get(key);
       const node = { key, fen, side: turn, edges: [], ...cached };
       graph.set(key, node);
       if (!cached) pending.push(node);
       return node;
     };
-    const root = discover(rootFen, side);
-    for (let i = 0; i < pending.length; i++) {
-      check();
-      const node = pending[i];
-      const current = parseFen(node.fen).board;
-      const kings = findKings(current);
-      node.winner = !kings.red ? 'black' : !kings.black ? 'red' : null;
-      const moves = node.winner ? [] : generateLegalMoves(current, node.side);
-      if (!node.winner && !moves.length) node.winner = opposite(node.side);
-      this.expanded++;
-      if (node.winner) { node.distance = 0; continue; }
-      for (const move of moves) {
+    try {
+      const root = discover(rootFen, side);
+      for (let i = 0; i < pending.length; i++) {
         check();
-        const fen = boardKey(applyBoardCopy(current, move));
-        node.edges.push({ move, to: discover(fen, opposite(node.side)) });
+        const node = pending[i];
+        let record = this.frontier.get(node.key);
+        if (!record) {
+          if (expanded >= expansionBudget) return stop('probe');
+          const current = parseFen(node.fen).board;
+          const kings = findKings(current);
+          let winner = !kings.red ? 'black' : !kings.black ? 'red' : null;
+          const moves = winner ? [] : generateLegalMoves(current, node.side);
+          if (!winner && !moves.length) winner = opposite(node.side);
+          record = { winner, edges: [] };
+          for (const move of moves) {
+            check();
+            record.edges.push({ move, fen: boardKey(applyBoardCopy(current, move)) });
+          }
+          // A frontier record is committed only after all its legal moves are
+          // generated. It is reusable work, not a proof of the position's value.
+          this.remember(node.key, record);
+          this.expanded++;
+          expanded++;
+        }
+        processed++;
+        if (record.winner) { node.winner = record.winner; node.distance = 0; continue; }
+        for (const edge of record.edges) {
+          check();
+          if (++edges > this.maxEdges) return stop('edges');
+          node.edges.push({ move: edge.move, to: discover(edge.fen, opposite(node.side)) });
+        }
       }
+      resolveGraph([...graph.values()], check);
+      // Only a complete graph is eligible for draw classification and proofs.
+      check();
+      for (const node of graph.values()) {
+        this.positions.set(node.key, { winner: node.winner, distance: node.distance,
+          move: node.move ?? null, next: node.next ?? null });
+      }
+      this.lastProbe = { reason: 'complete', states: graph.size, processed, expanded, edges };
+      return this.positions.get(root.key);
+    } catch (error) {
+      if (error === NODE_LIMIT) return stop('nodes');
+      throw error;
     }
-    resolveGraph([...graph.values()], check);
-    // Commit atomically: interrupted expansion/propagation proves nothing.
-    check();
-    for (const node of graph.values()) {
-      this.positions.set(node.key, { winner: node.winner, distance: node.distance,
-        move: node.move ?? null, next: node.next ?? null });
-    }
-    return this.positions.get(root.key);
+  }
+
+  snapshot() {
+    return { expanded: this.expanded, frontier: [...this.frontier] };
+  }
+
+  restore(data) {
+    this.expanded = data.expanded;
+    for (const [key, record] of data.frontier) this.remember(key, record);
   }
 }
+
+const NODE_LIMIT = Symbol('graph node budget');

@@ -1,10 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GameSolver } from '../tools/game-solver.mjs';
-import { parseFen } from '../js/notation.js';
+import { parseFen, boardToFen } from '../js/notation.js';
 import { applyBoardCopy, findKings } from '../js/board.js';
 import { generateLegalMoves } from '../js/rules.js';
-import { MATE_VAL } from '../js/constants.js';
+import { MATE_VAL, INF } from '../js/constants.js';
 
 const delayFen = '3Rk4/9/5P3/9/9/4P4/9/9/9/4K4';
 const opposite = side => side === 'red' ? 'black' : 'red';
@@ -59,21 +59,22 @@ test('depth exhaustion is unknown, while a completely searched cycle can prove a
   assert.equal(complete.interrupted, false);
 });
 
-test('cached mate distances are relative to the position and respect the new horizon', () => {
+test('cached mate distances are relative to the position and survive later root lookups', () => {
   const { board } = parseFen(delayFen);
-  const solver = new GameSolver();
+  const solver = new GameSolver({ useGraph: false });
   const parent = solver.solve(board, 'black', 6, Date.now() + 5000);
   const cached = solver.solve(board, 'black', 6, Date.now() + 5000);
   assert.equal(cached.score, parent.score);
   assert.equal(cached.nodes, 0);
   const child = applyBoardCopy(board, parent.move);
-  const shallow = solver.solve(child, 'red', 1, Date.now() + 5000);
-  assert.equal(shallow.resolved, false);
-  assert.equal(shallow.score, 0);
   const reused = solver.solve(child, 'red', 5, Date.now() + 5000);
   assert.equal(reused.resolved, true);
   assert.equal(reused.score, MATE_VAL - 5);
   assert.equal(reused.score, minimax(child, 'red', 5));
+  const shallow = solver.solve(child, 'red', 1, Date.now() + 5000);
+  assert.equal(shallow.resolved, true);
+  assert.equal(shallow.score, MATE_VAL - 5);
+  assert.equal(shallow.nodes, 0);
 });
 
 test('interruption restores the board and cannot certify a partial search', t => {
@@ -85,4 +86,66 @@ test('interruption restores the board and cannot certify a partial search', t =>
   assert.equal(result.interrupted, true);
   assert.equal(result.resolved, false);
   assert.deepEqual(board, original);
+});
+
+test('recursive search consumes exact graph boundaries and adjusts mate distance', () => {
+  const solver = new GameSolver();
+  solver.graph.solve(parseFen('4k4/9/9/4P4/9/9/9/9/9/4K4').board, 'black', () => {});
+  const parent = parseFen('4k4/9/9/9/4P4/9/9/9/9/4K4').board;
+  const ctx = solver.context(Date.now() + 5000);
+  const result = solver.search(parent, 'red', 7, 0, -INF, INF, ctx);
+  assert.ok(solver.proofHits > 0);
+  assert.equal(result.resolved, true);
+  assert.equal(result.score, minimax(parent, 'red', 7));
+});
+
+test('transient eviction never removes exact proofs', () => {
+  const solver = new GameSolver({ useGraph: false, ttLimit: 2 });
+  const board = parseFen(delayFen).board;
+  const first = solver.solve(board, 'black', 6, Date.now() + 5000);
+  const proofCount = solver.proofs.size;
+  for (let i = 0; i < 10; i++) solver.storeTransient(`temporary ${i}`, { score: 0 });
+  assert.equal(solver.tt.size, 2);
+  assert.equal(solver.proofs.size, proofCount);
+  const cached = solver.solve(board, 'black', 1, Date.now() + 5000);
+  assert.equal(cached.nodes, 0);
+  assert.equal(cached.score, first.score);
+});
+
+test('dynamic graph probing handles a two-pawn position above the old placement bound', () => {
+  const board = parseFen('3k5/7PP/9/9/9/9/9/9/9/5K3').board;
+  const solver = new GameSolver();
+  const result = solver.solve(board, 'red', 1, Date.now() + 5000);
+  assert.equal(result.resolved, true);
+  assert.equal(solver.method, 'graph');
+  assert.equal(solver.graph.lastProbe.reason, 'complete');
+});
+
+test('an incomplete graph remains unknown when actual resource budgets are exhausted', () => {
+  const board = parseFen('4k4/9/9/4P4/9/9/9/9/9/4K4').board;
+  const solver = new GameSolver({ graphNodes: 2, graphEdges: 20 });
+  const result = solver.solve(board, 'red', 1, Date.now() + 5000);
+  assert.equal(result.resolved, false);
+  assert.equal(result.score, 0);
+  assert.equal(solver.graph.lastProbe.reason, 'nodes');
+});
+
+test('equal-distance defenses may reuse known positions, but shorter resistance may not', () => {
+  const key = board => boardToFen(board).split(' ')[0];
+  const board = parseFen('4k4/9/3R5/9/9/4P4/9/9/9/4K4').board;
+  const solver = new GameSolver({ useGraph: false });
+  const result = solver.solve(board, 'black', 4, Date.now() + 5000);
+  const moves = generateLegalMoves(board, 'black');
+  const alternative = moves.find(m => JSON.stringify(m.to) !== JSON.stringify(result.move.to));
+  const selected = solver.preferKnown(board, moves, new Set([key(applyBoardCopy(board, alternative))]),
+    result, Date.now() + 5000);
+  assert.deepEqual(selected, alternative);
+  assert.equal(solver.preferredKnown, 1);
+
+  const losing = parseFen(delayFen).board;
+  const best = solver.solve(losing, 'black', 6, Date.now() + 5000);
+  const replies = generateLegalMoves(losing, 'black');
+  const worse = replies.find(m => m.to.row === 1);
+  assert.deepEqual(solver.preferKnown(losing, replies, new Set([key(applyBoardCopy(losing, worse))]),
+    best, Date.now() + 5000), best.move);
 });

@@ -13,7 +13,7 @@ const branchingFen = '2b1k4/3R5/4N4/9/1N7/9/9/9/4pppr1/3K4c w - - 0 1';
 
 test('game-analyze starts with table expansion and reports timeout without partial JSON', async () => {
   await assert.rejects(
-    run(process.execPath, [tool.pathname, '--name', 'timeout', '--fen', branchingFen, '--time-limit', '1']),
+    run(process.execPath, [tool.pathname, '--no-checkpoint', '--name', 'timeout', '--fen', branchingFen, '--time-limit', '1']),
     error => {
       assert.equal(error.code, 1);
       assert.equal(error.stdout, '');
@@ -27,7 +27,7 @@ test('game-analyze starts with table expansion and reports timeout without parti
 
 test('game-analyze fails on an unproved defense instead of exporting an arbitrary move', async () => {
   await assert.rejects(
-    run(process.execPath, [tool.pathname, '--name', 'timeout', '--fen', branchingFen,
+    run(process.execPath, [tool.pathname, '--no-checkpoint', '--name', 'timeout', '--fen', branchingFen,
       '--depth', '1', '--time-limit', '5000']),
     error => {
       assert.equal(error.code, 1);
@@ -48,7 +48,7 @@ test('game-analyze fails on an unproved defense instead of exporting an arbitrar
 
 test('game-analyze rejects missing metadata and invalid positions without JSON stdout', async () => {
   await assert.rejects(
-    run(process.execPath, [tool.pathname, '--fen', '4k4/9/9/9/9/9/9/9/9/4K4']),
+    run(process.execPath, [tool.pathname, '--no-checkpoint', '--fen', '4k4/9/9/9/9/9/9/9/9/4K4']),
     error => error.code === 1 && error.stdout === '' && /缺少 --name/.test(error.stderr),
   );
 });
@@ -56,7 +56,7 @@ test('game-analyze rejects missing metadata and invalid positions without JSON s
 test('game-analyze rejects a non-red initial side', async () => {
   const fen = '4k4/9/9/9/9/9/9/9/9/4K4 b - - 0 1';
   await assert.rejects(
-    run(process.execPath, [tool.pathname, '--name', 'test', '--fen', fen]),
+    run(process.execPath, [tool.pathname, '--no-checkpoint', '--name', 'test', '--fen', fen]),
     error => error.code === 1 && error.stdout === '' && /必須由紅方/.test(error.stderr),
   );
 });
@@ -64,7 +64,7 @@ test('game-analyze rejects a non-red initial side', async () => {
 test('game-analyze builds the bundled continuous-check position', async () => {
   const fen = '3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1 w - - 0 1';
   const { stdout, stderr } = await run(process.execPath, [
-    tool.pathname, '--name', 'sample', '--fen', fen, '--depth', '64', '--time-limit', '5000',
+    tool.pathname, '--no-checkpoint', '--name', 'sample', '--fen', fen, '--depth', '64', '--time-limit', '5000',
   ]);
   assert.equal(stderr, '');
   const result = JSON.parse(stdout);
@@ -80,7 +80,7 @@ test('game-analyze builds the bundled continuous-check position', async () => {
 test('game-analyze proves defenses on a simple mate puzzle', async () => {
   const fen = '4k4/9/9/6N2/9/4C4/9/4p4/3p1p3/4K4 w - - 0 1';
   const { stdout, stderr } = await run(process.execPath, [
-    tool.pathname, '--name', 'simple', '--fen', fen, '--depth', '64', '--time-limit', '5000',
+    tool.pathname, '--no-checkpoint', '--name', 'simple', '--fen', fen, '--depth', '64', '--time-limit', '5000',
   ]);
   assert.equal(stderr, '');
   const result = JSON.parse(stdout);
@@ -129,7 +129,7 @@ function verifyCoverage({ meta, table }) {
 
 test('game-analyze exports a closed cyclic policy without rejecting repetition', async () => {
   const { stdout, stderr } = await run(process.execPath, [
-    tool.pathname, '--name', 'cycle', '--fen', '3k5/9/9/9/9/9/9/9/9/5K3 w - - 0 1',
+    tool.pathname, '--no-checkpoint', '--name', 'cycle', '--fen', '3k5/9/9/9/9/9/9/9/9/5K3 w - - 0 1',
     '--time-limit', '5000',
   ]);
   assert.equal(stderr, '');
@@ -147,7 +147,7 @@ test('game-analyze exports a closed cyclic policy without rejecting repetition',
 test('game-analyze exports every player move even when black always wins', async () => {
   const fen = '4k4/9/9/9/9/9/4p4/9/9/4K4 w - - 0 1';
   const { stdout, stderr } = await run(process.execPath, [
-    tool.pathname, '--name', 'black wins', '--fen', fen, '--time-limit', '5000',
+    tool.pathname, '--no-checkpoint', '--name', 'black wins', '--fen', fen, '--time-limit', '5000',
   ]);
   assert.equal(stderr, '');
   const result = JSON.parse(stdout);
@@ -160,7 +160,7 @@ test('game-analyze exports every player move even when black always wins', async
 test('single red pawn exports a complete cyclic book without a search-depth horizon', async () => {
   const fen = '4k4/9/9/4P4/9/9/9/9/9/4K4 w - - 0 1';
   const { stdout, stderr } = await run(process.execPath, [
-    tool.pathname, '--name', 'single pawn', '--fen', fen,
+    tool.pathname, '--no-checkpoint', '--name', 'single pawn', '--fen', fen,
     '--depth', '1', '--time-limit', '5000',
   ]);
   assert.equal(stderr, '');

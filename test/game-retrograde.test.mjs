@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveGraph, RetrogradeSolver, fitsGraph } from '../tools/game-retrograde.mjs';
+import { resolveGraph, RetrogradeSolver } from '../tools/game-retrograde.mjs';
 import { GameSolver } from '../tools/game-solver.mjs';
 import { parseFen } from '../js/notation.js';
 import { applyBoardCopy } from '../js/board.js';
@@ -43,7 +43,6 @@ test('cycles with a forced winning exit are solved, while avoidable losses remai
 test('single-pawn graph is solved once and reused for subsequent positions', () => {
   const { board } = parseFen(pawnFen);
   const original = structuredClone(board);
-  assert.equal(fitsGraph(board), true);
   const solver = new GameSolver();
   const result = solver.solve(board, 'red', 1, Date.now() + 5000);
   assert.equal(solver.method, 'graph');
@@ -85,4 +84,18 @@ test('interrupted graph construction commits no partial results', () => {
   }), /stop/);
   assert.equal(graph.positions.size, 0);
   assert.deepEqual(board, original);
+});
+
+test('partial graph work survives serialization and resumes without re-expansion', () => {
+  const graph = new RetrogradeSolver();
+  const board = parseFen(pawnFen).board;
+  assert.equal(graph.solve(board, 'red', () => {}, 5), null);
+  assert.equal(graph.positions.size, 0);
+  assert.equal(graph.frontier.size, 5);
+  const resumed = new RetrogradeSolver();
+  resumed.restore(JSON.parse(JSON.stringify(graph.snapshot())));
+  const result = resumed.solve(board, 'red', () => {});
+  assert.equal(result.winner, 'red');
+  assert.equal(result.distance, 3);
+  assert.equal(resumed.expanded, resumed.positions.size);
 });
