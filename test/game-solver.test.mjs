@@ -149,3 +149,48 @@ test('equal-distance defenses may reuse known positions, but shorter resistance 
   assert.deepEqual(solver.preferKnown(losing, replies, new Set([key(applyBoardCopy(losing, worse))]),
     best, Date.now() + 5000), best.move);
 });
+
+test('serialized search stacks finish deep iterations across many tiny time slices', () => {
+  for (const [fen, side, depth] of [[delayFen, 'black', 6],
+    ['3k5/9/9/9/9/9/9/9/9/5K3', 'black', 64]]) {
+    const board = parseFen(fen).board, original = structuredClone(board);
+    const uninterrupted = new GameSolver({ useGraph: false, ttLimit: 0 });
+    const expected = uninterrupted.solve(board, side, depth, Infinity);
+    let saved, result, totalNodes = 0, slices = 0, deepStack = false;
+    do {
+      let checks = 0;
+      const solver = new GameSolver({ useGraph: false, ttLimit: 0,
+        isCancelled: () => ++checks > 40 });
+      if (saved) solver.restore(saved);
+      result = solver.solve(board, side, depth, Infinity);
+      totalNodes += result.nodes;
+      saved = JSON.parse(JSON.stringify(solver.snapshot()));
+      deepStack ||= saved.activeSearch?.stack.length > 2;
+      assert.deepEqual(board, original);
+      if (result.interrupted) assert.equal(result.resolved, false);
+      assert.ok(++slices < 2000, 'continuation must make progress without a TT');
+    } while (result.interrupted);
+    assert.ok(slices > 2);
+    assert.ok(deepStack);
+    assert.deepEqual([result.score, result.move, result.pv, result.resolved],
+      [expected.score, expected.move, expected.pv, expected.resolved]);
+    assert.equal(totalNodes, expected.nodes, 'completed search nodes must not be re-entered');
+    assert.equal(saved.activeSearch, null);
+  }
+});
+
+test('a periodic checkpoint taken inside an active search is independently resumable', () => {
+  const board = parseFen(delayFen).board;
+  let saved;
+  const solver = new GameSolver({ useGraph: false, onTick: () => {
+    if (!saved && solver.activeSearch?.stack.length >= 4) {
+      saved = JSON.parse(JSON.stringify(solver.snapshot()));
+    }
+  } });
+  const expected = solver.solve(board, 'black', 6, Infinity);
+  assert.ok(saved?.activeSearch);
+  const resumed = new GameSolver({ useGraph: false });
+  resumed.restore(saved);
+  const result = resumed.solve(board, 'black', 6, Infinity);
+  assert.deepEqual([result.score, result.move, result.pv], [expected.score, expected.move, expected.pv]);
+});

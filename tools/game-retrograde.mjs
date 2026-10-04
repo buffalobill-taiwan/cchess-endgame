@@ -103,6 +103,8 @@ export class RetrogradeSolver {
     this.frontierEdges = 0;
     this.expanded = 0;
     this.lastProbe = null;
+    this.active = null;
+    this.activeIndex = new Map();
   }
 
   remember(key, record) {
@@ -119,28 +121,34 @@ export class RetrogradeSolver {
     const rootFen = boardKey(board), rootKey = `${side}:${rootFen}`;
     check();
     if (this.positions.has(rootKey)) return this.positions.get(rootKey);
-    const graph = new Map(), pending = [];
-    let edges = 0, processed = 0, expanded = 0;
+    if (this.active?.rootKey !== rootKey) {
+      this.active = { rootKey, nodes: [], pending: [], cursor: 0, edges: 0 };
+      this.activeIndex = new Map();
+    }
+    const work = this.active;
+    let expanded = 0;
     const stop = reason => {
-      this.lastProbe = { reason, states: graph.size, processed, expanded, edges };
+      this.lastProbe = { reason, states: work.nodes.length, processed: work.cursor,
+        expanded, edges: work.edges };
       return null;
     };
     const discover = (fen, turn) => {
       const key = `${turn}:${fen}`;
-      if (graph.has(key)) return graph.get(key);
-      if (graph.size >= this.maxNodes) throw NODE_LIMIT;
+      if (this.activeIndex.has(key)) return this.activeIndex.get(key);
+      if (work.nodes.length >= this.maxNodes) throw NODE_LIMIT;
       const cached = this.positions.get(key);
-      const node = { key, fen, side: turn, edges: [], ...cached };
-      graph.set(key, node);
-      if (!cached) pending.push(node);
-      return node;
+      const id = work.nodes.length;
+      work.nodes.push({ key, fen, side: turn, ...cached, edges: [] });
+      this.activeIndex.set(key, id);
+      if (!cached) work.pending.push(id);
+      return id;
     };
     try {
-      const root = discover(rootFen, side);
-      for (let i = 0; i < pending.length; i++) {
+      discover(rootFen, side);
+      while (work.cursor < work.pending.length) {
         check();
-        const node = pending[i];
-        let record = this.frontier.get(node.key);
+        const node = work.nodes[work.pending[work.cursor]];
+        let record = node.record ?? this.frontier.get(node.key);
         if (!record) {
           if (expanded >= expansionBudget) return stop('probe');
           const current = parseFen(node.fen).board;
@@ -153,29 +161,41 @@ export class RetrogradeSolver {
             check();
             record.edges.push({ move, fen: boardKey(applyBoardCopy(current, move)) });
           }
-          // A frontier record is committed only after all its legal moves are
-          // generated. It is reusable work, not a proof of the position's value.
           this.remember(node.key, record);
           this.expanded++;
           expanded++;
         }
-        processed++;
-        if (record.winner) { node.winner = record.winner; node.distance = 0; continue; }
-        for (const edge of record.edges) {
+        // Retain the record while linking, even if the frontier cache evicts it.
+        node.record = record;
+        if (record.winner) { node.winner = record.winner; node.distance = 0; }
+        while (node.edges.length < record.edges.length) {
           check();
-          if (++edges > this.maxEdges) return stop('edges');
-          node.edges.push({ move: edge.move, to: discover(edge.fen, opposite(node.side)) });
+          if (work.edges >= this.maxEdges) return stop('edges');
+          const edge = record.edges[node.edges.length];
+          const to = discover(edge.fen, opposite(node.side));
+          // Link and advance together; a checkpoint never sees a half edge.
+          node.edges.push({ move: edge.move, to });
+          work.edges++;
         }
+        delete node.record;
+        work.cursor++;
       }
-      resolveGraph([...graph.values()], check);
-      // Only a complete graph is eligible for draw classification and proofs.
+      // Resolve on a private copy: interruption must not turn provisional
+      // propagation results into cached boundary proofs on the next attempt.
+      const nodes = work.nodes.map(({ record, ...node }) => ({ ...node, edges: [] }));
+      for (let i = 0; i < nodes.length; i++) {
+        nodes[i].edges = work.nodes[i].edges.map(edge => ({ move: edge.move, to: nodes[edge.to] }));
+      }
+      resolveGraph(nodes, check);
       check();
-      for (const node of graph.values()) {
+      for (const node of nodes) {
         this.positions.set(node.key, { winner: node.winner, distance: node.distance,
           move: node.move ?? null, next: node.next ?? null });
       }
-      this.lastProbe = { reason: 'complete', states: graph.size, processed, expanded, edges };
-      return this.positions.get(root.key);
+      stop('complete');
+      this.active = null;
+      this.activeIndex.clear();
+      return this.positions.get(rootKey);
     } catch (error) {
       if (error === NODE_LIMIT) return stop('nodes');
       throw error;
@@ -183,11 +203,13 @@ export class RetrogradeSolver {
   }
 
   snapshot() {
-    return { expanded: this.expanded, frontier: [...this.frontier] };
+    return { expanded: this.expanded, frontier: [...this.frontier], active: this.active };
   }
 
   restore(data) {
     this.expanded = data.expanded;
+    this.active = data.active ?? null;
+    this.activeIndex = new Map(this.active?.nodes.map((node, id) => [node.key, id]) ?? []);
     for (const [key, record] of data.frontier) this.remember(key, record);
   }
 }

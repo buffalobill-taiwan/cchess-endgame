@@ -99,3 +99,92 @@ test('partial graph work survives serialization and resumes without re-expansion
   assert.equal(result.distance, 3);
   assert.equal(resumed.expanded, resumed.positions.size);
 });
+
+test('graph batches retain node identities and link each edge only once', () => {
+  const graph = new RetrogradeSolver(), board = parseFen(pawnFen).board;
+  graph.solve(board, 'red', () => {}, 5);
+  const active = graph.active, firstNode = active.nodes[0], firstEdge = firstNode.edges[0];
+  const cursor = active.cursor, edges = active.edges;
+  graph.solve(board, 'red', () => {}, 5);
+  assert.equal(graph.active, active);
+  assert.equal(active.nodes[0], firstNode);
+  assert.equal(firstNode.edges[0], firstEdge);
+  assert.equal(active.cursor, cursor + 5);
+  assert.ok(active.edges > edges);
+  const snapshot = JSON.parse(JSON.stringify(graph.snapshot()));
+  const resumed = new RetrogradeSolver();
+  resumed.restore(snapshot);
+  assert.equal(resumed.active.cursor, active.cursor);
+  assert.equal(resumed.active.edges, active.edges);
+  resumed.solve(board, 'red', () => {}, 5);
+  assert.equal(resumed.active.cursor, active.cursor + 5);
+  const result = resumed.solve(board, 'red', () => {});
+  const fresh = new RetrogradeSolver();
+  assert.deepEqual(result, fresh.solve(board, 'red', () => {}));
+  assert.deepEqual([...resumed.positions], [...fresh.positions]);
+  assert.equal(resumed.expanded, fresh.expanded);
+  assert.equal(resumed.active, null);
+});
+
+test('interruption during edge linking resumes from the next edge without duplication', () => {
+  const board = parseFen(pawnFen).board;
+  let graph = new RetrogradeSolver(), calls = 0, rounds = 0;
+  while (true) {
+    calls = 0;
+    try {
+      graph.solve(board, 'red', () => { if (++calls > 30) throw new Error('slice'); });
+      break;
+    } catch (error) {
+      assert.equal(error.message, 'slice');
+      assert.equal(graph.positions.size, 0);
+      const saved = JSON.parse(JSON.stringify(graph.snapshot()));
+      graph = new RetrogradeSolver();
+      graph.restore(saved);
+      assert.ok(++rounds < 3000);
+      // Once expansion is complete, allow the separate propagation pass to finish.
+      if (graph.active.cursor === graph.active.pending.length) {
+        graph.solve(board, 'red', () => {});
+        break;
+      }
+    }
+  }
+  const fresh = new RetrogradeSolver();
+  fresh.solve(board, 'red', () => {});
+  assert.ok(rounds > 2);
+  assert.equal(graph.expanded, fresh.expanded);
+  assert.deepEqual([...graph.positions], [...fresh.positions]);
+});
+
+test('raising graph budgets resumes an edge stopped by a node or edge limit', () => {
+  const board = parseFen('3k5/9/9/9/9/9/9/9/9/5K3').board;
+  for (const limits of [{ maxNodes: 2 }, { maxEdges: 2 }]) {
+    const limited = new RetrogradeSolver(new Map(), limits);
+    assert.equal(limited.solve(board, 'red', () => {}), null);
+    assert.match(limited.lastProbe.reason, /nodes|edges/);
+    const snapshot = JSON.parse(JSON.stringify(limited.snapshot()));
+    const resumed = new RetrogradeSolver();
+    resumed.restore(snapshot);
+    const result = resumed.solve(board, 'red', () => {});
+    const fresh = new RetrogradeSolver();
+    assert.deepEqual(result, fresh.solve(board, 'red', () => {}));
+    assert.deepEqual([...resumed.positions], [...fresh.positions]);
+    assert.equal(resumed.expanded, fresh.expanded);
+  }
+});
+
+test('interrupted propagation leaves the retained graph unclassified', () => {
+  const graph = new RetrogradeSolver(), board = parseFen('3k5/9/9/9/9/9/9/9/9/5K3').board;
+  let propagationChecks = 0;
+  assert.throws(() => graph.solve(board, 'red', () => {
+    if (graph.active?.nodes.length && graph.active.cursor === graph.active.pending.length) {
+      if (++propagationChecks === 10) throw new Error('propagation interrupted');
+    }
+  }), /propagation interrupted/);
+  assert.equal(graph.positions.size, 0);
+  const resumed = new RetrogradeSolver();
+  resumed.restore(JSON.parse(JSON.stringify(graph.snapshot())));
+  const result = resumed.solve(board, 'red', () => {});
+  const fresh = new RetrogradeSolver();
+  assert.deepEqual(result, fresh.solve(board, 'red', () => {}));
+  assert.deepEqual([...resumed.positions], [...fresh.positions]);
+});

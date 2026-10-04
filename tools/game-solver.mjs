@@ -21,6 +21,7 @@ export class GameSolver {
     this.proofs = new Map();
     this.tt = new Map();
     this.iterations = new Map();
+    this.activeSearch = null;
     this.ttLimit = ttLimit;
     this.graph = useGraph ? new RetrogradeSolver(this.proofs, { maxNodes: graphNodes, maxEdges: graphEdges }) : null;
     this.isCancelled = isCancelled;
@@ -79,9 +80,12 @@ export class GameSolver {
     try {
       this.check(deadline);
       const proven = this.proofs.get(rootKey);
-      if (proven) { this.proofHits++; this.method = 'proof'; return this.result(proven); }
+      if (proven) {
+        this.activeSearch = null;
+        this.proofHits++; this.method = 'proof'; return this.result(proven);
+      }
       const deepen = depth => {
-        const result = this.search(board, side, depth, 0, -INF, INF, ctx);
+        const result = this.search(board, side, depth, 0, -INF, INF, ctx, true);
         best = { ...result, depth };
         if (result.resolved) {
           this.rememberProof(board, side, result);
@@ -97,13 +101,16 @@ export class GameSolver {
         }
       } catch (error) { if (error !== PROBE_LIMIT) throw error; }
       nodes += ctx.nodes;
-      if (this.graph) {
+      if (this.graph && !(this.activeSearch?.rootKey === rootKey && this.activeSearch.depth > 2)) {
         this.method = 'graph';
         const before = this.graph.expanded;
         let batch = 256;
         while (true) {
           const proof = this.graph.solve(board, side, () => this.check(deadline), batch);
-          if (proof) return this.result(proof, nodes + this.graph.expanded - before);
+          if (proof) {
+            this.activeSearch = null;
+            return this.result(proof, nodes + this.graph.expanded - before);
+          }
           const probe = this.graph.lastProbe;
           // Continue a graph that is closing through transpositions. Rapidly
           // growing frontiers and actual resource limits fall back to search.
@@ -152,103 +159,121 @@ export class GameSolver {
 
   snapshot() {
     return { proofs: [...this.proofs], transient: [...this.tt], iterations: [...this.iterations],
-      graph: this.graph?.snapshot() ?? null };
+      activeSearch: this.activeSearch, graph: this.graph?.snapshot() ?? null };
   }
 
   restore(data) {
     for (const [key, proof] of data.proofs) this.proofs.set(key, proof);
     for (const [key, entry] of data.transient) this.storeTransient(key, entry);
     this.iterations = new Map(data.iterations);
+    this.activeSearch = data.activeSearch ?? null;
     if (this.graph && data.graph) this.graph.restore(data.graph);
   }
 
-  search(board, side, remaining, ply, alpha, beta, ctx) {
-    this.check(ctx.deadline);
-    if (++ctx.nodes > ctx.nodeLimit) throw PROBE_LIMIT;
-    const key = positionKey(board, side);
-    if (ctx.path.has(key)) {
-      ctx.repeats++;
-      return { score: 0, move: null, pv: [], resolved: true };
+  // Explicit frames are JSON-safe continuations. Checkpoints are taken only
+  // between complete frame transitions; no caller board is ever left mutated.
+  search(board, side, remaining, ply, alpha, beta, ctx, resumable = false) {
+    const rootKey = positionKey(board, side);
+    const frame = (board, side, remaining, ply, alpha, beta) => ({
+      board, side, remaining, ply, alpha, beta, key: positionKey(board, side), stage: 'enter',
+    });
+    let task = resumable ? this.activeSearch : null;
+    if (!task || task.rootKey !== rootKey || task.depth !== remaining) {
+      task = { rootKey, depth: remaining, repeats: 0, horizons: 0,
+        stack: [frame(board, side, remaining, ply, alpha, beta)] };
     }
-    const proof = this.proofs.get(key);
-    // Don't let a long cached mate jump a finite horizon: other branches may
-    // contain a shorter, still undiscovered mate. Root lookups have no horizon.
-    if (proof && (proof.winner === 'draw' || proof.distance <= remaining)) {
-      this.proofHits++;
-      return { score: absoluteScore(proofScore(proof), ply), move: proof.move,
-        pv: this.proofPV(proof), resolved: true };
-    }
-    const entry = this.tt.get(key);
-    if (entry) { this.tt.delete(key); this.tt.set(key, entry); }
-    if (entry && entry.depth === remaining) {
-      const score = absoluteScore(entry.score, ply);
-      if (entry.flag === 'exact' || entry.flag === 'lower' && score >= beta ||
-          entry.flag === 'upper' && score <= alpha) {
-        ctx.horizons++;
-        return { score, move: entry.move, pv: entry.pv, resolved: false };
+    if (resumable) this.activeSearch = task;
+    const path = new Set(task.stack.filter(f => f.stage === 'children').map(f => f.key));
+    let result;
+    const finish = value => {
+      const finished = task.stack.pop();
+      if (finished.stage === 'children') path.delete(finished.key);
+      if (!task.stack.length) { result = value; return; }
+      const parent = task.stack.at(-1), move = parent.ordered[parent.index++];
+      if (parent.side === 'red' ? value.score > parent.score : value.score < parent.score) {
+        parent.score = value.score;
+        parent.bestMove = move;
+        parent.pv = [move, ...value.pv];
       }
-    }
-
-    const info = pieceInfo(board);
-    let winner = !info.red ? 'black' : !info.black ? 'red' : null;
-    const moves = winner ? [] : generateLegalMoves(board, side, info);
-    if (!winner && moves.length === 0) winner = opposite(side);
-    if (winner) {
-      this.proofs.set(key, { winner, distance: 0, move: null, next: null });
-      return { score: (winner === 'red' ? 1 : -1) * (MATE_VAL - ply),
-        move: null, pv: [], resolved: true };
-    }
-    if (remaining === 0) {
-      ctx.horizons++;
-      return { score: 0, move: null, pv: [], resolved: false };
-    }
-
-    // Checks and captures first for either side; coordinates break ties. This
-    // ordering affects speed only, not which outcomes are considered.
-    const ordered = moves.map(move => {
-      const undo = makeMove(board, move);
-      let check;
-      try { check = isInCheck(board, opposite(side)); }
-      finally { unmakeMove(board, move, undo); }
-      return { move, rank: (ply > 0 && sameMove(move, entry?.move) ? 4 : 0) +
-        (check ? 2 : 0) + (move.captured ? 1 : 0) };
-    }).sort((a, b) => b.rank - a.rank ||
-      a.move.from.row - b.move.from.row || a.move.from.col - b.move.from.col ||
-      a.move.to.row - b.move.to.row || a.move.to.col - b.move.to.col);
-
-    const alpha0 = alpha, beta0 = beta;
-    const repeats = ctx.repeats, horizons = ctx.horizons;
-    let score = side === 'red' ? -INF : INF;
-    let bestMove = null, pv = [];
-    ctx.path.add(key);
-    try {
-      for (const { move } of ordered) {
-        const undo = makeMove(board, move);
-        let child;
-        try {
-          child = this.search(board, opposite(side), remaining - 1, ply + 1, alpha, beta, ctx);
-        } finally { unmakeMove(board, move, undo); }
-        if (side === 'red' ? child.score > score : child.score < score) {
-          score = child.score;
-          bestMove = move;
-          pv = [move, ...child.pv];
+      if (parent.side === 'red') parent.alpha = Math.max(parent.alpha, parent.score);
+      else parent.beta = Math.min(parent.beta, parent.score);
+    };
+    while (task.stack.length) {
+      this.check(ctx.deadline);
+      const f = task.stack.at(-1);
+      if (f.stage === 'enter') {
+        if (ctx.nodes >= ctx.nodeLimit) throw PROBE_LIMIT;
+        ctx.nodes++;
+        if (path.has(f.key)) {
+          task.repeats++;
+          finish({ score: 0, move: null, pv: [], resolved: true });
+          continue;
         }
-        if (side === 'red') alpha = Math.max(alpha, score);
-        else beta = Math.min(beta, score);
-        if (alpha >= beta) break;
+        const proof = this.proofs.get(f.key);
+        if (proof && (proof.winner === 'draw' || proof.distance <= f.remaining)) {
+          this.proofHits++;
+          finish({ score: absoluteScore(proofScore(proof), f.ply), move: proof.move,
+            pv: this.proofPV(proof), resolved: true });
+          continue;
+        }
+        const entry = this.tt.get(f.key);
+        if (entry) { this.tt.delete(f.key); this.tt.set(f.key, entry); }
+        if (entry && entry.depth === f.remaining) {
+          const score = absoluteScore(entry.score, f.ply);
+          if (entry.flag === 'exact' || entry.flag === 'lower' && score >= f.beta ||
+              entry.flag === 'upper' && score <= f.alpha) {
+            task.horizons++;
+            finish({ score, move: entry.move, pv: entry.pv, resolved: false });
+            continue;
+          }
+        }
+        const info = pieceInfo(f.board);
+        let winner = !info.red ? 'black' : !info.black ? 'red' : null;
+        const moves = winner ? [] : generateLegalMoves(f.board, f.side, info);
+        if (!winner && !moves.length) winner = opposite(f.side);
+        if (winner) {
+          this.proofs.set(f.key, { winner, distance: 0, move: null, next: null });
+          finish({ score: (winner === 'red' ? 1 : -1) * (MATE_VAL - f.ply),
+            move: null, pv: [], resolved: true });
+          continue;
+        }
+        if (f.remaining === 0) {
+          task.horizons++;
+          finish({ score: 0, move: null, pv: [], resolved: false });
+          continue;
+        }
+        f.ordered = moves.map(move => {
+          const undo = makeMove(f.board, move);
+          let check;
+          try { check = isInCheck(f.board, opposite(f.side)); }
+          finally { unmakeMove(f.board, move, undo); }
+          return { move, rank: (f.ply > 0 && sameMove(move, entry?.move) ? 4 : 0) +
+            (check ? 2 : 0) + (move.captured ? 1 : 0) };
+        }).sort((a, b) => b.rank - a.rank ||
+          a.move.from.row - b.move.from.row || a.move.from.col - b.move.from.col ||
+          a.move.to.row - b.move.to.row || a.move.to.col - b.move.to.col).map(x => x.move);
+        Object.assign(f, { stage: 'children', index: 0, alpha0: f.alpha, beta0: f.beta,
+          repeats: task.repeats, horizons: task.horizons,
+          score: f.side === 'red' ? -INF : INF, bestMove: null, pv: [] });
+        path.add(f.key);
+      } else if (f.index < f.ordered.length && f.alpha < f.beta) {
+        task.stack.push(frame(applyBoardCopy(f.board, f.ordered[f.index]), opposite(f.side),
+          f.remaining - 1, f.ply + 1, f.alpha, f.beta));
+      } else {
+        const flag = f.score <= f.alpha0 ? 'upper' : f.score >= f.beta0 ? 'lower' : 'exact';
+        const resolved = flag === 'exact' && (f.score !== 0 || task.horizons === f.horizons);
+        if (task.repeats === f.repeats) {
+          const record = { score: relativeScore(f.score, f.ply), move: f.bestMove, pv: f.pv, resolved };
+          if (resolved) this.rememberProof(f.board, f.side, record);
+          else this.storeTransient(f.key, { ...record, depth: f.remaining, flag });
+        }
+        finish({ score: f.score, move: f.bestMove, pv: f.pv, resolved });
       }
-    } finally { ctx.path.delete(key); }
-
-    const flag = score <= alpha0 ? 'upper' : score >= beta0 ? 'lower' : 'exact';
-    const resolved = flag === 'exact' && (score !== 0 || ctx.horizons === horizons);
-    // Repetition depends on the current path: don't cache it as a fact about
-    // the board. Mate scores in the TT are distances relative to this node.
-    if (ctx.repeats === repeats) {
-      const record = { score: relativeScore(score, ply), move: bestMove, pv, resolved };
-      if (resolved) this.rememberProof(board, side, record);
-      else this.storeTransient(key, { ...record, depth: remaining, flag });
     }
-    return { score, move: bestMove, pv, resolved };
+    ctx.repeats += task.repeats;
+    ctx.horizons += task.horizons;
+    if (resumable) this.activeSearch = null;
+    return result;
   }
 }
 

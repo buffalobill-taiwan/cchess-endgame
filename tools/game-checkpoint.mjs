@@ -3,7 +3,7 @@ import { readFileSync, writeFileSync, renameSync, mkdirSync, openSync, fsyncSync
 import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 
-const VERSION = 1;
+const VERSION = 2;
 const digest = text => createHash('sha256').update(text).digest('hex');
 // Input is the normalized board-only FEN; all books start with red to move.
 export function automaticCheckpointPath(init, directory = tmpdir()) {
