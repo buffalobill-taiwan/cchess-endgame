@@ -2,11 +2,11 @@
 // usage: node tools/game-analyze.mjs --name <name> --fen <fen> [--depth N] [--time-limit MS] [--pretty]
 
 import { parseFen, boardToFen, moveToNotation } from '../js/notation.js';
-import { MATE_VAL } from '../js/constants.js';
 import { applyBoardCopy, findKings } from '../js/board.js';
 import { generateLegalMoves, isInCheck } from '../js/rules.js';
-import { findRefutation, searchRootAsync } from '../js/search.js';
+import { GameSolver } from './game-solver.mjs';
 import { AnalysisDiagnostics } from './game-analyze-diagnostics.mjs';
+import { countWinningSteps } from './game-steps.mjs';
 
 const DEFAULT_DEPTH = 64;
 const DEFAULT_TIME_LIMIT = 60000;
@@ -78,40 +78,29 @@ function isTerminal(board, sideToMove) {
   return orderedMoves(board, sideToMove).length === 0;
 }
 
-async function chooseBlackMove(board, moves, knownRedPositions, args, deadline, diagnostics) {
+function chooseBlackMove(board, moves, solver, args, deadline, diagnostics) {
   if (moves.length === 0) return null;
-  const moveToKnownPosition = moves.find(move =>
-    knownRedPositions.has(boardKey(applyBoardCopy(board, move))));
-  if (moveToKnownPosition) {
-    diagnostics.known++;
-    return moveToKnownPosition;
+  if (moves.length === 1) {
+    diagnostics.forced++;
+    return moves[0];
   }
-
-  const remaining = deadline - Date.now();
   checkDeadline(deadline);
-  const depth = Math.min(12, args.depth);
   let result;
-  if (depth >= 2) {
-    const start = Date.now();
-    try {
-      result = await findRefutation(board, 'black', depth, start, Math.min(500, remaining), { deadline });
-    } finally {
-      diagnostics.recordSearch(Date.now() - start);
-    }
-    if (result.move) {
-      // A proven mate is the preferred defense. Otherwise use the engine's
-      // best available move at its completed search depth.
-      if (result.score < -MATE_VAL / 2 || !result.interrupted) return result.move;
-    }
+  const start = Date.now();
+  try {
+    result = solver.solve(board, 'black', args.depth, deadline);
+  } finally {
+    diagnostics.recordSearch(Date.now() - start);
+    if (solver.method === 'graph') diagnostics.graphQueries++;
+    diagnostics.graphPositions = solver.graph?.positions.size ?? 0;
+    diagnostics.graphExpanded = solver.graph?.expanded ?? 0;
   }
   checkDeadline(deadline);
-  diagnostics.recordFallback(moveToNotation(board, moves[0], 'black'),
-    result?.move ? moveToNotation(board, result.move, 'black') : null,
-    result?.score, result?.interrupted ?? false);
-  return moves[0];
+  if (result.resolved && result.move) return result.move;
+  throw new AnalysisFailure(`黑方最優應手尚未證明（搜尋深度 ${args.depth} plies）：${boardKey(board)} b - - 0 1`);
 }
 
-async function buildTable(board, args, deadline, diagnostics) {
+async function buildTable(board, solver, args, deadline, diagnostics) {
   const table = Object.create(null);
   const pending = [{ board, node: diagnostics.discover(boardKey(board)) }];
   const visited = new Set();
@@ -140,6 +129,12 @@ async function buildTable(board, args, deadline, diagnostics) {
       const afterRed = applyBoardCopy(redBoard, redMove);
       const afterRedFen = boardKey(afterRed);
       diagnostics.afterRedFen = afterRedFen;
+      // This black-to-move position already has a fixed response. Its target
+      // was queued when the entry was first created, including cycle edges.
+      if (afterRedFen in table) {
+        diagnostics.reused++;
+        continue;
+      }
       if (isTerminal(afterRed, 'black')) {
         if (!(afterRedFen in table)) diagnostics.entries++;
         table[afterRedFen] = null;
@@ -147,7 +142,7 @@ async function buildTable(board, args, deadline, diagnostics) {
       }
 
       const blackMoves = orderedMoves(afterRed, 'black');
-      const blackMove = await chooseBlackMove(afterRed, blackMoves, knownRedPositions, args, deadline, diagnostics);
+      const blackMove = chooseBlackMove(afterRed, blackMoves, solver, args, deadline, diagnostics);
       if (!blackMove) {
         if (!(afterRedFen in table)) diagnostics.entries++;
         table[afterRedFen] = null;
@@ -181,23 +176,15 @@ async function analyze(args) {
   const start = Date.now();
   const deadline = start + args.timeLimit;
   const diagnostics = new AnalysisDiagnostics(start, args.timeLimit, boardKey(parsed.board));
+  const solver = new GameSolver();
   try {
-    // Keep the browser engine's red-to-move minimax result for metadata. This
-    // search does not limit table generation: every red move is still added.
-    const stepBudget = Math.min(15000, args.timeLimit);
-    const stepResult = await searchRootAsync(parsed.board, args.depth, stepBudget, {
-      deadline: Math.min(deadline, Date.now() + stepBudget),
-    });
-    diagnostics.recordRoot(parsed.board, stepResult, Date.now() - start);
+    const table = await buildTable(parsed.board, solver, args, deadline, diagnostics);
+    diagnostics.phase = '步數推導';
+    const step = countWinningSteps(boardKey(parsed.board), table, () => checkDeadline(deadline));
     checkDeadline(deadline);
-    const step = stepResult.score > MATE_VAL / 2 && stepResult.pv.length > 0
-      ? Math.ceil(stepResult.pv.length / 2)
-      : null;
-    diagnostics.phase = '應手表展開';
-    const table = await buildTable(parsed.board, args, deadline, diagnostics);
     return { meta: { name: args.name, step, init: boardKey(parsed.board) }, table };
   } catch (error) {
-    if (error instanceof AnalysisTimeout) error.report = diagnostics.format();
+    if (error instanceof AnalysisFailure) error.report = diagnostics.format(Date.now(), error instanceof AnalysisTimeout);
     throw error;
   }
 }
@@ -209,6 +196,6 @@ try {
 } catch (error) {
   const message = error instanceof Error ? error.message : String(error);
   console.error(`分析失敗：${message}`);
-  if (error instanceof AnalysisTimeout) console.error(error.report);
+  if (error.report) console.error(error.report);
   process.exitCode = 1;
 }

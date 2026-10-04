@@ -1,9 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { AnalysisDiagnostics } from '../tools/game-analyze-diagnostics.mjs';
-import { parseFen } from '../js/notation.js';
-import { generateLegalMoves } from '../js/rules.js';
-import { MATE_VAL } from '../js/constants.js';
 
 test('timeout diagnostics attribute search time and started positions to discovery branches', () => {
   const d = new AnalysisDiagnostics(100, 1000, 'initial');
@@ -24,7 +21,8 @@ test('timeout diagnostics attribute search time and started positions to discove
   d.discover('pending', branch, '俥六退一 / 將５退１');
   d.activeMove = '俥六平四';
   d.afterRedFen = 'after-red';
-  d.recordFallback('將５退１', '象３進５', 0, true);
+  d.reused = 3;
+  d.forced = 2;
   d.updatePending(4);
   d.updatePending(1);
   d.completed = 2;
@@ -36,16 +34,14 @@ test('timeout diagnostics attribute search time and started positions to discove
   assert.match(report, /合法 13／將軍 7；直接新增 2；此分支已開始 2 個局面；黑方搜尋 500ms/);
   assert.match(report, /當下路徑：俥六進一 \/ 將５進１ → 傌八進六 \/ 將５進１/);
   assert.match(report, /紅方走後 FEN：after-red b - - 0 1/);
-  assert.match(report, /搜尋建議 象３進５，分數 0，搜尋已中斷/);
+  assert.match(report, /唯一合法應手 2 次；重用已固定應手 3 次/);
   assert.equal(d.format(1100), report);
 });
 
-test('timeout diagnostics show replayed root PV and mate metadata', () => {
-  const fen = '4k4/9/9/6N2/9/4C4/9/4p4/3p1p3/4K4';
-  const { board } = parseFen(fen + ' w - - 0 1');
-  const move = generateLegalMoves(board, 'red')[0];
-  const d = new AnalysisDiagnostics(0, 1000, fen);
-  d.recordRoot(board, { pv: [move], score: MATE_VAL - 1, interrupted: false }, 20);
-  assert.match(d.format(1000), /主搜尋：20ms；分數 99999；已完成；紅方殺步：1/);
-  assert.match(d.format(1000), /主搜尋 PV：.+/);
+test('diagnostics distinguish table expansion from post-build step counting', () => {
+  const d = new AnalysisDiagnostics(0, 1000, 'initial');
+  assert.match(d.format(1000), /中斷階段：應手表展開/);
+  d.phase = '步數推導';
+  assert.match(d.format(1000), /中斷階段：步數推導/);
+  assert.doesNotMatch(d.format(1000), /主搜尋/);
 });

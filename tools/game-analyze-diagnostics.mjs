@@ -1,7 +1,3 @@
-import { moveToNotation } from '../js/notation.js';
-import { applyBoardCopy } from '../js/board.js';
-import { MATE_VAL } from '../js/constants.js';
-
 function pathTo(node) {
   const path = [];
   for (let n = node; n?.parent; n = n.parent) path.push(n.via);
@@ -15,8 +11,7 @@ export class AnalysisDiagnostics {
     this.start = start;
     this.timeLimit = timeLimit;
     this.init = init;
-    this.phase = '主搜尋';
-    this.root = null;
+    this.phase = '應手表展開';
     this.nodes = [];
     this.current = null;
     this.pending = 0;
@@ -25,24 +20,13 @@ export class AnalysisDiagnostics {
     this.completed = 0;
     this.searches = 0;
     this.searchMs = 0;
-    this.known = 0;
-    this.fallback = 0;
-    this.fallbackExamples = [];
+    this.reused = 0;
+    this.forced = 0;
+    this.graphQueries = 0;
+    this.graphPositions = 0;
+    this.graphExpanded = 0;
     this.activeMove = null;
     this.afterRedFen = null;
-  }
-
-  recordRoot(board, result, elapsed) {
-    const pv = [];
-    let position = board;
-    let color = 'red';
-    for (const move of result.pv) {
-      pv.push(moveToNotation(position, move, color));
-      position = applyBoardCopy(position, move);
-      color = color === 'red' ? 'black' : 'red';
-    }
-    this.root = { elapsed, score: result.score, interrupted: result.interrupted, pv,
-      step: result.score > MATE_VAL / 2 && pv.length ? Math.ceil(pv.length / 2) : null };
   }
 
   discover(fen, parent = null, via = null) {
@@ -64,14 +48,7 @@ export class AnalysisDiagnostics {
     if (this.current) this.current.searchMs += ms;
   }
 
-  recordFallback(chosen, suggested, score, interrupted) {
-    this.fallback++;
-    if (this.fallbackExamples.length < 5) this.fallbackExamples.push({
-      node: this.current, red: this.activeMove, chosen, suggested, score, interrupted,
-    });
-  }
-
-  format(now = Date.now()) {
+  format(now = Date.now(), timedOut = true) {
     // Count started positions and search time along their first-discovery paths.
     // These are traversal statistics, not all possible transposition paths.
     for (const n of this.nodes) {
@@ -87,18 +64,14 @@ export class AnalysisDiagnostics {
       }
     }
     const out = [
-      '逾時分析（截至中斷時的統計；分支依首次發現路徑歸屬）',
+      `${timedOut ? '逾時' : '未解局面'}分析（截至中斷時的統計；分支依首次發現路徑歸屬）`,
       `耗時：${now - this.start}ms／上限 ${this.timeLimit}ms；中斷階段：${this.phase}`,
       `初始 FEN：${this.init} w - - 0 1`,
     ];
-    if (this.root) {
-      const r = this.root;
-      out.push(`主搜尋：${r.elapsed}ms；分數 ${r.score}；${r.interrupted ? '已中斷' : '已完成'}；紅方殺步：${r.step ?? '未證明'}`);
-      if (r.pv.length) out.push(`主搜尋 PV：${r.pv.join(' → ')}`);
-    }
     out.push(
       `應手表：已開始 ${this.nodes.filter(n => n.started).length} 個紅方局面；完整展開 ${this.completed} 個；已發現 ${this.nodes.length} 個；待處理 ${this.pending} 個（峰值 ${this.peakPending}）；已記錄 ${this.entries} 個應手表項目`,
-      `黑方搜尋：${this.searches} 次／${this.searchMs}ms；回到已知局面 ${this.known} 次；改用排序第一步 ${this.fallback} 次`,
+      `黑方搜尋：${this.searches} 次／${this.searchMs}ms；唯一合法應手 ${this.forced} 次；重用已固定應手 ${this.reused} 次`,
+      `局面圖：查詢 ${this.graphQueries} 次；已展開 ${this.graphExpanded} 個局面；已求解並快取 ${this.graphPositions} 個局面（含行棋方）`,
     );
     if (this.current) {
       out.push(`當下路徑：${pathTo(this.current)}`,
@@ -118,9 +91,7 @@ export class AnalysisDiagnostics {
       `    合法 ${n.legal}／將軍 ${n.checks}；直接新增 ${n.added}；此分支已開始 ${n.subtree} 個局面；黑方搜尋 ${n.subtreeMs}ms`,
       `    FEN：${n.fen} w - - 0 1`,
     ]));
-    if (this.fallbackExamples.length) out.push('改用排序第一步的例子（最多 5 筆）：',
-      ...this.fallbackExamples.map(e => `  ${pathTo(e.node)} → ${e.red}／${e.chosen}；搜尋建議 ${e.suggested ?? '無'}，分數 ${e.score ?? '無'}，${e.interrupted ? '搜尋已中斷' : '未取得可採用的搜尋結果'}`));
-    out.push('主搜尋結果不限制應手表展開；相同 FEN 才會去重。以上統計不代表完整遊戲樹。');
+    out.push('紅方所有合法走法都會展開，相同 FEN 才會去重；完成應手表後才推導步數。以上統計不代表完整遊戲樹。');
     return out.join('\n');
   }
 }
