@@ -73,7 +73,7 @@ export class AnalysisDiagnostics {
       `應手表：已開始 ${this.nodes.filter(n => n.started).length} 個紅方局面；完整展開 ${this.completed} 個；已發現 ${this.nodes.length} 個；待處理 ${this.pending} 個（峰值 ${this.peakPending}）；已記錄 ${this.entries} 個應手表項目`,
       `黑方搜尋：${this.searches} 次／${this.searchMs}ms；唯一合法應手 ${this.forced} 次；重用已固定應手 ${this.reused} 次`,
       `局面圖：查詢 ${this.graphQueries} 次；已展開 ${this.graphExpanded} 個局面；共用已證明快取 ${this.graphPositions} 個局面（含行棋方）`,
-      `同等最佳應手中優先重用局面 ${this.preferredKnown} 次`,
+      `搜尋前優先接回已知局面 ${this.preferredKnown} 次`,
     );
     if (this.current) {
       out.push(`當下路徑：${pathTo(this.current)}`,

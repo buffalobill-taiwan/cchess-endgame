@@ -157,6 +157,21 @@ test('game-analyze exports every player move even when black always wins', async
   verifyCoverage(result);
 });
 
+test('perpetual chase exports a closed defense book without proving exact mate distances', async () => {
+  const fen = '8C/2R1aP2C/3k5/9/9/9/9/5n3/3pp1p2/3p1K1p1 w - - 0 1';
+  const { stdout, stderr } = await run(process.execPath, [
+    tool.pathname, '--no-checkpoint', '--name', 'chase', '--fen', fen, '--time-limit', '5000',
+  ]);
+  assert.equal(stderr, '');
+  const result = JSON.parse(stdout);
+  assert.equal(result.meta.init, fen.split(' ')[0]);
+  assert.equal(result.meta.step, null);
+  assert.ok(Object.values(result.table).every(response => response !== null));
+  const coverage = verifyCoverage(result);
+  assert.ok(coverage.cycles > 0);
+  assert.ok(coverage.positions > 1);
+});
+
 test('single red pawn exports a complete cyclic book without a search-depth horizon', async () => {
   const fen = '4k4/9/9/4P4/9/9/9/9/9/4K4 w - - 0 1';
   const { stdout, stderr } = await run(process.execPath, [

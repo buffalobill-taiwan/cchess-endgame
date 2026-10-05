@@ -9,6 +9,54 @@ import { MATE_VAL, INF } from '../js/constants.js';
 const delayFen = '3Rk4/9/5P3/9/9/4P4/9/9/9/4K4';
 const opposite = side => side === 'red' ? 'black' : 'red';
 
+test('cyclic defense covers all red choices and survives checkpoint restore', () => {
+  const board = parseFen('5P2C/3ka3C/2R6/9/9/9/9/5n3/3pp1p2/3p1K1p1').board;
+  const original = structuredClone(board);
+  const solver = new GameSolver();
+  const move = solver.defend(board, 64, Date.now() + 5000);
+  assert.ok(move);
+  assert.deepEqual(board, original);
+  assert.equal(solver.proofs.size, 0, 'a defense is not an exact outcome/distance proof');
+  const restored = new GameSolver();
+  restored.restore(JSON.parse(JSON.stringify(solver.snapshot())));
+  assert.deepEqual(restored.defend(board, 1, Infinity), move);
+  const seen = new Set(), active = new Set();
+  let cycles = 0;
+  function visit(board, side) {
+    const key = `${side}:${boardToFen(board).split(' ')[0]}`;
+    if (active.has(key)) { cycles++; return; }
+    if (seen.has(key)) return;
+    seen.add(key);
+    const kings = findKings(board);
+    assert.ok(kings.black, 'defense must never allow red to win');
+    if (!kings.red) return;
+    const moves = generateLegalMoves(board, side);
+    if (!moves.length) { assert.equal(side, 'red'); return; }
+    active.add(key);
+    if (side === 'red') {
+      for (const move of moves) visit(applyBoardCopy(board, move), 'black');
+    } else {
+      const move = restored.defenses.get(key);
+      assert.ok(moves.some(m => JSON.stringify(m) === JSON.stringify(move)), `missing defense: ${key}`);
+      visit(applyBoardCopy(board, move), 'red');
+    }
+    active.delete(key);
+  }
+  visit(board, 'black');
+  assert.ok(cycles > 0);
+});
+
+test('failed or interrupted defense probes publish no speculative cycle assumptions', () => {
+  for (const solver of [new GameSolver(), new GameSolver({ isCancelled: () => true })]) {
+    const board = parseFen(delayFen).board;
+    assert.equal(solver.defend(board, 8, Infinity), null);
+    assert.equal(solver.defenses.size, 0);
+  }
+  const solver = new GameSolver();
+  assert.equal(solver.defend(parseFen('3k5/9/9/9/9/9/9/9/9/5K3').board, 1, Infinity), null);
+  assert.equal(solver.defenses.size, 0, 'a depth boundary is not a closed cycle');
+});
+
 // Exhaustive reference: no alpha-beta, move ordering, TT or mate-score reuse.
 function minimax(board, side, depth, ply = 0) {
   const kings = findKings(board);

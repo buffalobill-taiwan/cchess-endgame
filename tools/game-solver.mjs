@@ -29,6 +29,9 @@ export class GameSolver {
     this.method = 'search';
     this.proofHits = 0;
     this.preferredKnown = 0;
+    // Proven non-losing policies may contain cycles; they do not claim an
+    // exact outcome or mate distance and must stay separate from proofs.
+    this.defenses = new Map();
   }
 
   check(deadline) {
@@ -69,6 +72,71 @@ export class GameSolver {
   result(proof, nodes = 0) {
     return { score: proofScore(proof), move: proof.move, pv: this.proofPV(proof),
       resolved: true, depth: proof.distance, nodes, interrupted: false };
+  }
+
+  defend(board, maxDepth, deadline) {
+    const rootKey = positionKey(board, 'black');
+    if (this.defenses.has(rootKey)) return this.defenses.get(rootKey);
+    let nodes = 0;
+    for (let depth = 1; depth <= maxDepth; depth++) {
+      const path = new Set(), safe = new Map(), journal = [];
+      const rollback = start => {
+        while (journal.length > start) safe.delete(journal.pop());
+      };
+      const visit = (board, side, remaining) => {
+        this.check(deadline);
+        if (++nodes > 20000) throw PROBE_LIMIT;
+        const key = positionKey(board, side);
+        if (path.has(key) || safe.has(key)) return true;
+        if (this.defenses.has(key)) return true;
+        const proof = this.proofs.get(key);
+        if (proof) {
+          if (proof.winner === 'red') return false;
+          safe.set(key, proof.move); journal.push(key);
+          return true;
+        }
+        const info = pieceInfo(board);
+        const moves = !info.red || !info.black ? [] : generateLegalMoves(board, side, info);
+        if (!info.black) return false;
+        if (!info.red || !moves.length) return !info.red || side === 'red';
+        if (!remaining) return false;
+        const start = journal.length;
+        path.add(key);
+        // Check/capture ordering finds immediate punishments of red mistakes
+        // before exploring quiet play. Existing policy links close cycles first.
+        const ordered = moves.map(move => {
+          const child = applyBoardCopy(board, move);
+          const childKey = positionKey(child, opposite(side));
+          return { move, child, rank: (path.has(childKey) || safe.has(childKey) ? 4 : 0) +
+            (isInCheck(child, opposite(side)) ? 2 : 0) + (move.captured ? 1 : 0) };
+        }).sort((a, b) => b.rank - a.rank);
+        let accepted = side === 'red', chosen = null;
+        for (const { move, child } of ordered) {
+          const ok = visit(child, opposite(side), remaining - 1);
+          if (side === 'black' && ok) { accepted = true; chosen = move; break; }
+          if (side === 'red' && !ok) { accepted = false; break; }
+        }
+        path.delete(key);
+        if (!accepted) {
+          // Descendants may have assumed this ancestor was safe. Discard them
+          // together when the ancestor fails, including their chosen replies.
+          rollback(start);
+          return false;
+        }
+        safe.set(key, chosen); journal.push(key);
+        return true;
+      };
+      try {
+        if (visit(board, 'black', depth)) {
+          for (const [key, move] of safe) this.defenses.set(key, move);
+          return this.defenses.get(rootKey);
+        }
+      } catch (error) {
+        if (error === PROBE_LIMIT || error === TIMEOUT) return null;
+        throw error;
+      }
+    }
+    return null;
   }
 
   solve(board, side, maxDepth, deadline) {
@@ -159,10 +227,12 @@ export class GameSolver {
 
   snapshot() {
     return { proofs: [...this.proofs], transient: [...this.tt], iterations: [...this.iterations],
+      defenses: [...this.defenses],
       activeSearch: this.activeSearch, graph: this.graph?.snapshot() ?? null };
   }
 
   restore(data) {
+    this.defenses = new Map(data.defenses ?? []);
     for (const [key, proof] of data.proofs) this.proofs.set(key, proof);
     for (const [key, entry] of data.transient) this.storeTransient(key, entry);
     this.iterations = new Map(data.iterations);

@@ -102,9 +102,19 @@ function chooseBlackMove(board, moves, solver, known, args, deadline, diagnostic
     return moves[0];
   }
   checkDeadline(deadline);
+  // The response book deliberately accepts repetition, even when searching
+  // could find a faster win. Pending targets still get fully expanded.
+  const returning = moves.find(move => known.has(boardKey(applyBoardCopy(board, move))));
+  if (returning) {
+    diagnostics.preferredKnown++;
+    return returning;
+  }
   let result;
   const start = Date.now();
   try {
+    const defense = solver.defend(board, args.depth, deadline);
+    if (defense) return defense;
+    checkDeadline(deadline);
     result = solver.solve(board, 'black', args.depth, deadline);
   } finally {
     diagnostics.recordSearch(Date.now() - start);
@@ -114,12 +124,7 @@ function chooseBlackMove(board, moves, solver, known, args, deadline, diagnostic
   }
   checkDeadline(deadline);
   if (result.resolved && result.move) {
-    let move;
-    try { move = solver.preferKnown(board, moves, known, result, deadline); }
-    catch (error) { checkDeadline(deadline); throw error; }
-    checkDeadline(deadline);
-    diagnostics.preferredKnown = solver.preferredKnown;
-    return move;
+    return result.move;
   }
   throw new AnalysisFailure(`黑方最優應手尚未證明（搜尋深度 ${args.depth} plies）：${boardKey(board)} b - - 0 1`);
 }
