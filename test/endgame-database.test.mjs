@@ -8,7 +8,7 @@ import { promisify } from 'node:util';
 import { EndgameDatabase, bookChunks, readMetadata, databasePath, GRAPH_LIMIT, GRAPH_EDGE_LIMIT,
   assertDatabaseIdle } from '../tools/endgame-database.mjs';
 import { analyzeDisk } from '../tools/endgame-disk-book.mjs';
-import { createAnalysis, analyzeBook } from '../tools/endgame-book.mjs';
+import { createAnalysis, analyzeBook } from './support/endgame-book-reference.mjs';
 const run = promisify(execFile);
 const tool = new URL('../tools/endgame-analyze.mjs', import.meta.url).pathname;
 const simple = '3k2c2/1P2n1N2/4bP3/9/9/9/r6R1/3p5/4p4/3K3C1';

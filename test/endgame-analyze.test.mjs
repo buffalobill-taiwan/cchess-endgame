@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { parseFen } from '../js/notation.js';
 import { applyBoardCopy } from '../js/board.js';
 import { isInCheck } from '../js/rules.js';
-import { createAnalysis, analyzeBook } from '../tools/endgame-book.mjs';
+import { createAnalysis, analyzeBook } from './support/endgame-book-reference.mjs';
 import { boardKey, positionKey, inspect, solveGraph, sameMove } from '../tools/endgame-graph.mjs';
 import { databasePath as checkpointPath, readMetadata as readCheckpoint } from '../tools/endgame-database.mjs';
 

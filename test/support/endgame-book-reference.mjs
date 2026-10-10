@@ -1,8 +1,9 @@
-import { parseFen, moveToNotation } from '../js/notation.js';
-import { applyBoardCopy } from '../js/board.js';
-import { isInCheck } from '../js/rules.js';
+// In-memory reference implementation used to compare the SQLite production pipeline.
+import { parseFen, moveToNotation } from '../../js/notation.js';
+import { applyBoardCopy } from '../../js/board.js';
+import { isInCheck } from '../../js/rules.js';
 import { boardKey, positionKey, inspect, createGraph, indexGraph, discover,
-  expandGraph, solveGraph, counts } from './endgame-graph.mjs';
+  expandGraph, solveGraph, counts } from '../../tools/endgame-graph.mjs';
 
 export function createAnalysis(init) {
   return { init, phase: 'expand1', first: createGraph('red'), counter: createGraph('black'),
