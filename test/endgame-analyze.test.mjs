@@ -10,7 +10,7 @@ import { applyBoardCopy } from '../js/board.js';
 import { isInCheck } from '../js/rules.js';
 import { createAnalysis, analyzeBook } from '../tools/endgame-book.mjs';
 import { boardKey, positionKey, inspect, solveGraph, sameMove } from '../tools/endgame-graph.mjs';
-import { checkpointPath, readCheckpoint } from '../tools/endgame-checkpoint.mjs';
+import { databasePath as checkpointPath, readMetadata as readCheckpoint } from '../tools/endgame-database.mjs';
 
 const run = promisify(execFile);
 const tool = new URL('../tools/endgame-analyze.mjs', import.meta.url).pathname;
@@ -172,16 +172,14 @@ test('CLI preserves JSON format, automatic resume and reports stage counts on st
   assert.deepEqual(JSON.parse(resumed.stdout), book);
   const renamed = await run(process.execPath, [tool, '--name', 'renamed', '--fen', `${first} w - - 20 30`], options);
   assert.equal(JSON.parse(renamed.stdout).meta.name, 'renamed');
-  const bad = JSON.parse(await readFile(file, 'utf8'));
-  bad.data.name = 'tampered';
-  await writeFile(file, JSON.stringify(bad));
-  await assert.rejects(run(process.execPath, [tool, '--resume', file]), e => e.stdout === '' && /校驗失敗/.test(e.stderr));
+  await writeFile(file, 'corrupt database');
+  await assert.rejects(run(process.execPath, [tool, '--resume', file]), e => e.stdout === '' && /database|資料庫/.test(e.stderr));
   const recovered = await run(process.execPath, args, options);
-  assert.match(recovered.stderr, /忽略自動快照/);
+  assert.match(recovered.stderr, /忽略自動資料庫/);
 });
 
 test('CLI resource limits save resumable work without declaring the puzzle invalid', async t => {
-  const dir = await workspace(t), file = join(dir, 'work.json');
+  const dir = await workspace(t), file = join(dir, 'work.sqlite');
   await assert.rejects(run(process.execPath, [tool, '--name', 'limit', '--fen', first,
     '--graph-nodes', '2', '--checkpoint', file]), error => {
     assert.equal(error.stdout, '');
